@@ -17,6 +17,7 @@ from keep_alive import keep_alive
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
+OWNER = os.getenv("OWNER_ID")
 
 keep_alive()
 
@@ -228,13 +229,10 @@ async def on_message(message):
         )
         embed.add_field(
             name="",
-            value=f"Bot made by <@{OWNER_ID}>",
+            value=f"Bot made by <@{OWNER}>",
             inline=False,
         )
         await message.channel.send(embed=embed)
-
-
-OWNER_ID = 531844962338209802
 
 
 # @client.tree.command(name="hello", description="Say hello!", guild=GUILD_ID)
