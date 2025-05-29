@@ -44,13 +44,13 @@ def draw_number(box_definition):
 
     # Iterate through the box items to find which number corresponds to the random value
     for item in box_definition:
-        cumulative_probability += item["prob"]
+        cumulative_probability += item[1]
         if rand < cumulative_probability:
-            return item["value"]
+            return item[0]
 
     # Fallback: In case of floating point inaccuracies, return the last value.
     # This should rarely be reached if probabilities sum exactly to 1.
-    return box_definition[-1]["value"]
+    return box_definition[-1][0]
 
 
 def run_simulation(
@@ -100,41 +100,30 @@ def run_simulation(
         successful_outcomes / num_simulations
     ) * 100
 
-    # Calculate probabilities for all unique sums and sort them
-    sum_probabilities = []
-    for s, freq in sum_frequencies.items():
-        sum_probabilities.append((s, (freq / num_simulations) * 100))
-
-    # Sort by probability in descending order
-    sum_probabilities.sort(key=lambda x: x[1], reverse=True)
-
-    # Get the top 3 most likely sums
-    top_3_sums = sum_probabilities[:3]
-
     return (
         estimated_probability_at_least_target,
         successful_outcomes,
-        top_3_sums,
+        sum_frequencies.most_common(3),
     )
 
 
 def parser(num_draws_box1, num_draws_box2, target_sum_value):
     box1_definition = [
-        {"value": 1, "prob": 0.36},
-        {"value": 2, "prob": 0.37},
-        {"value": 5, "prob": 0.15},
-        {"value": 10, "prob": 0.07},
-        {"value": 20, "prob": 0.03},
-        {"value": 30, "prob": 0.02},
+        (1, 0.36),
+        (2, 0.37),
+        (5, 0.15),
+        (10, 0.07),
+        (20, 0.03),
+        (30, 0.02),
     ]
 
     box2_definition = [
-        {"value": 10, "prob": 0.46},
-        {"value": 15, "prob": 0.27},
-        {"value": 20, "prob": 0.17},
-        {"value": 50, "prob": 0.05},
-        {"value": 80, "prob": 0.03},
-        {"value": 100, "prob": 0.02},
+        (10, 0.46),
+        (15, 0.27),
+        (20, 0.17),
+        (50, 0.05),
+        (80, 0.03),
+        (100, 0.02),
     ]
 
     number_of_simulations = 1000000
@@ -230,7 +219,7 @@ async def on_message(message):
         )
         embed.add_field(
             name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
-            value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]:.4f}%",
+            value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]/10000:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]/10000:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]/10000:.4f}%",
             inline=False,
         )
         embed.add_field(
@@ -280,7 +269,7 @@ async def chance(interaction: discord.Interaction, bag1: int, bag2: int, ss: int
     )
     embed.add_field(
         name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
-        value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]:.4f}%",
+        value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]/10000:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]/10000:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]/10000:.4f}%",
         inline=False,
     )
     embed.add_field(
