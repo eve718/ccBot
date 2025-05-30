@@ -158,9 +158,7 @@ async def on_message(message):
                 await message.channel.send(embed=embed)
                 return
 
-        prob_at_least_target, successful_count, top_sums = parser(
-            info[0], info[1], info[2]
-        )
+        prob_at_least_target, top_sums = parser(info[0], info[1], info[2])
 
         if not top_sums:
             embed = discord.Embed(
@@ -211,7 +209,7 @@ async def on_message(message):
 async def chance(interaction: discord.Interaction, bag1: int, bag2: int, ss: int):
     await interaction.response.defer()
 
-    prob_at_least_target, successful_count, top_sums = parser(bag1, bag2, ss)
+    prob_at_least_target, top_sums = parser(bag1, bag2, ss)
     if not top_sums:
         embed = discord.Embed(
             title="",
