@@ -1,10 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sun May 25 23:24:13 2025
-
-@author: utente
-"""
-
 import os
 import asyncio
 import discord
@@ -26,10 +19,15 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# Define a reasonable timeout for the calculation (e.g., 10 seconds)
+# You might need to adjust this based on your bot's resources and expected maximum input size.
+CALCULATION_TIMEOUT = 10  # seconds
 
-def calculate_exact_probabilities(box_def, num_draws):
+
+async def calculate_exact_probabilities(box_def, num_draws):
     """
     Calculates the exact probability distribution of sums from a box using dynamic programming.
+    Now an async function to allow for cancellation/timeout.
 
     Args:
         box_def (list of tuples): List of (value, probability) tuples.
@@ -38,14 +36,13 @@ def calculate_exact_probabilities(box_def, num_draws):
     Returns:
         dict: A dictionary where keys are sums and values are their exact probabilities.
     """
-    # Initialize DP state: {sum: probability}
-    # After 0 draws, sum is 0 with 100% probability
     current_probabilities = {0: 1.0}
 
     for _ in range(num_draws):
-        next_probabilities = collections.defaultdict(
-            float
-        )  # Use defaultdict for easier accumulation
+        # Allow the event loop to breathe to prevent blocking during long calculations
+        # and to allow cancellation if a timeout occurs.
+        await asyncio.sleep(0)
+        next_probabilities = collections.defaultdict(float)
         for prev_sum, prev_prob in current_probabilities.items():
             for value, prob_of_value in box_def:
                 new_sum = prev_sum + value
@@ -56,17 +53,19 @@ def calculate_exact_probabilities(box_def, num_draws):
     return current_probabilities
 
 
-def run_exact_calculation(box1_def, box2_def, draws_box1, draws_box2, target_sum):
+async def run_exact_calculation(box1_def, box2_def, draws_box1, draws_box2, target_sum):
     # Calculate probabilities for Box 1 sums
-    box1_sums_probs = calculate_exact_probabilities(box1_def, draws_box1)
+    box1_sums_probs = await calculate_exact_probabilities(box1_def, draws_box1)
 
     # Calculate probabilities for Box 2 sums
-    box2_sums_probs = calculate_exact_probabilities(box2_def, draws_box2)
+    box2_sums_probs = await calculate_exact_probabilities(box2_def, draws_box2)
 
     # Combine probabilities from Box 1 and Box 2 draws
     combined_sums_probs = collections.defaultdict(float)
     for sum1, prob1 in box1_sums_probs.items():
         for sum2, prob2 in box2_sums_probs.items():
+            # Allow the event loop to breathe during the combination step
+            await asyncio.sleep(0)
             combined_sums_probs[sum1 + sum2] += prob1 * prob2
 
     # Calculate probability of sum >= target_sum
@@ -84,7 +83,10 @@ def run_exact_calculation(box1_def, box2_def, draws_box1, draws_box2, target_sum
     return (prob_at_least_target * 100, top_3_sums_with_probs)  # Convert to percentage
 
 
-def parser(num_draws_box1, num_draws_box2, target_sum_value):
+async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
+    """
+    An async version of the parser function to be used with asyncio.wait_for.
+    """
     box1_definition = [
         (1, 0.36),
         (2, 0.37),
@@ -103,7 +105,7 @@ def parser(num_draws_box1, num_draws_box2, target_sum_value):
         (100, 0.02),
     ]
 
-    return run_exact_calculation(
+    return await run_exact_calculation(
         box1_definition,
         box2_definition,
         num_draws_box1,
@@ -118,160 +120,239 @@ async def on_ready():
     print(f"Logged on as {bot.user}!")
 
 
-@bot.event
-async def on_message(message):
-    if message.author.id == bot.user.id:
+@bot.command(
+    name="bags",
+    description="Will calc the chance to obtain at least [ss] soulstones from [bag1] bags I plus [bag2] bags II",
+)
+@commands.cooldown(1, 10, commands.BucketType.user)  # 1 use per 10 seconds per user
+async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
+    """
+    Calculates soulstone probabilities for prefix command !bags.
+    """
+    if bag1 < 0 or bag2 < 0 or ss < 0:
+        embed = discord.Embed(
+            title="",
+            description="Wrong input. Numbers of bags and soulstones goal must be non-negative.",
+            color=discord.Color.red(),
+        )
+        await ctx.send(embed=embed)
         return
 
-    content = message.content
-    if content[0:6] == "!bags ":
-        info = content[6:].split(",")
+    # Acknowledge the command quickly
+    initial_message = await ctx.send("Calculating... This might take a moment.")
 
-        if len(info) != 3:
-            embed = discord.Embed(
-                title="",
-                description="Wrong input. It should be like this:",
-                color=discord.Color.red(),
-            )
-            embed.add_field(
-                name="!bags [number of bags I], [number of bags II], [soulstones goal]",
-                value="",
-            )
-            await message.channel.send(embed=embed)
-            return
+    try:
+        prob_at_least_target, top_sums = await asyncio.wait_for(
+            async_parser(bag1, bag2, ss), timeout=CALCULATION_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        embed = discord.Embed(
+            title="Calculation Timeout",
+            description=f"The calculation took too long (>{CALCULATION_TIMEOUT} seconds) and was cancelled. Please try with smaller bag numbers.",
+            color=discord.Color.orange(),
+        )
+        await initial_message.edit(
+            content=None, embed=embed
+        )  # Edit the original message
+        return
+    except Exception as e:
+        # Catch any other unexpected errors during calculation
+        embed = discord.Embed(
+            title="Calculation Error",
+            description=f"An unexpected error occurred during calculation: {e}",
+            color=discord.Color.red(),
+        )
+        await initial_message.edit(content=None, embed=embed)
+        return
 
-        for i in range(3):
-            tmp = info[i].strip()
+    if not top_sums:
+        embed = discord.Embed(
+            title="",
+            description="Something went wrong during calculation.",
+            color=discord.Color.red(),
+        )
+        await initial_message.edit(content=None, embed=embed)
+        return
 
-            if tmp.isnumeric() and int(tmp) >= 0:
-                info[i] = int(tmp)
-            else:
-                embed = discord.Embed(
-                    title="",
-                    description="Wrong input. It should be like this:",
-                    color=discord.Color.red(),
-                )
-                embed.add_field(
-                    name="!bags [number of bags I], [number of bags II], [soulstones goal]",
-                    value="",
-                )
-                await message.channel.send(embed=embed)
-                return
+    embed = discord.Embed(
+        title="",
+        description="",
+        color=discord.Color.red(),
+    )
+    embed.add_field(
+        name="--- Parameters ---",
+        value=f"Bag I Draws: {bag1}\nBag II Draws: {bag2}\nTarget Soulstones (at least): {ss}",
+        inline=False,
+    )
+    embed.add_field(
+        name="--- Pre-results ---",
+        value=f"Average Soulstones Expected: {3.75*bag1+18.95*bag2}",
+        inline=False,
+    )
+    embed.add_field(
+        name="--- Results ---",
+        value=f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%",
+        inline=False,
+    )
+    embed.add_field(
+        name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
+        value=(
+            f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]*100:.4f}%\n"
+            f" 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]*100:.4f}%\n"
+            f" 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]*100:.4f}%"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="",
+        value=f"Bot made by <@{OWNER}>",
+        inline=False,
+    )
+    await initial_message.edit(content=None, embed=embed)  # Edit the original message
 
-        try:
-            prob_at_least_target, top_sums = await asyncio.wait_for(
-                parser(info[0], info[1], info[2]), timeout=10
-            )
 
-            if not top_sums:
-                embed = discord.Embed(
-                    title="",
-                    description="Something went wrong",
-                    color=discord.Color.red(),
-                )
-                await message.channel.send(embed=embed)
-                return
-
-            embed = discord.Embed(
-                title="",
-                description="",
-                color=discord.Color.red(),
-            )
-            embed.add_field(
-                name="--- Parameters ---",
-                value=f"Bag I Draws: {info[0]}\nBag II Draws: {info[1]}\nTarget Soulstones (at least): {info[2]}",
-                inline=False,
-            )
-            embed.add_field(
-                name="--- Pre-results ---",
-                value=f"Average Soulstones Expected: {3.75*info[0]+18.95*info[1]}",
-                inline=False,
-            )
-            embed.add_field(
-                name="--- Results ---",
-                value=f"Probability of Soulstones being at least {info[2]}: {prob_at_least_target:.4f}%",
-                inline=False,
-            )
-            embed.add_field(
-                name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
-                value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]*100:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]*100:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]*100:.4f}%",
-                inline=False,
-            )
-            embed.add_field(
-                name="",
-                value=f"Bot made by <@{OWNER}>",
-                inline=False,
-            )
-            await message.channel.send(embed=embed)
-        except asyncio.TimeoutError:
-            embed = discord.Embed(
-                title="",
-                description="Request timed out",
-                color=discord.Color.red(),
-            )
-            await message.channel.send(embed=embed)
+@bags_prefix.error
+async def bags_prefix_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(
+            f"This command is on cooldown. Please try again after {error.retry_after:.2f} seconds."
+        )
+    elif isinstance(error, commands.MissingRequiredArgument):
+        embed = discord.Embed(
+            title="",
+            description="Wrong input. It should be like this:",
+            color=discord.Color.red(),
+        )
+        embed.add_field(
+            name="!bags [number of bags I], [number of bags II], [soulstones goal]",
+            value="",
+        )
+        await ctx.send(embed=embed)
+    elif isinstance(error, commands.BadArgument):
+        embed = discord.Embed(
+            title="",
+            description="Wrong input. Please ensure bag numbers and soulstone goal are valid integers.",
+            color=discord.Color.red(),
+        )
+        embed.add_field(
+            name="!bags [number of bags I], [number of bags II], [soulstones goal]",
+            value="",
+        )
+        await ctx.send(embed=embed)
+    else:
+        # For any other unhandled errors
+        await ctx.send(f"An unexpected error occurred: {error}")
 
 
 @bot.tree.command(
     name="bags",
     description=f"Will calc the chance to obtain at least [ss] soulstones from [bag1] bags I plus [bag2] bags II",
 )
-async def chance(interaction: discord.Interaction, bag1: int, bag2: int, ss: int):
-    await interaction.response.defer(thinking=True)
-    await interaction.followup.send("Calculating...")
+@app_commands.describe(
+    bag1="Number of Bag I draws",
+    bag2="Number of Bag II draws",
+    ss="Target Soulstones (at least)",
+)
+@app_commands.checks.cooldown(
+    1, 10, key=lambda i: i.user.id
+)  # 1 use per 10 seconds per user
+async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss: int):
+    """
+    Calculates soulstone probabilities for slash command /bags.
+    """
+    if bag1 < 0 or bag2 < 0 or ss < 0:
+        embed = discord.Embed(
+            title="",
+            description="Numbers of bags and soulstones goal must be non-negative.",
+            color=discord.Color.red(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)  # Defer the response immediately
 
     try:
         prob_at_least_target, top_sums = await asyncio.wait_for(
-            parser(bag1, bag2, ss), timeout=10
+            async_parser(bag1, bag2, ss), timeout=CALCULATION_TIMEOUT
         )
-        if not top_sums:
-            embed = discord.Embed(
-                title="",
-                description="Something went wrong",
-                color=discord.Color.red(),
-            )
-            await interaction.response.send_message(embed=embed)
-            return
-
-        embed = discord.Embed(
-            title="",
-            description="",
-            color=discord.Color.red(),
-        )
-        embed.add_field(
-            name="--- Parameters ---",
-            value=f"Bag I Draws: {bag1}\nBag II Draws: {bag2}\nTarget Soulstones (at least): {ss}",
-            inline=False,
-        )
-        embed.add_field(
-            name="--- Pre-results ---",
-            value=f"Average Soulstones Expected: {3.75*bag1+18.95*bag2}",
-            inline=False,
-        )
-        embed.add_field(
-            name="--- Results ---",
-            value=f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%",
-            inline=False,
-        )
-        embed.add_field(
-            name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
-            value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]*100:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]*100:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]*1000:.4f}%",
-            inline=False,
-        )
-        embed.add_field(
-            name="",
-            value=f"Bot made by <@{OWNER}>",
-            inline=False,
-        )
-        await asyncio.sleep(delay=0)
-        await interaction.followup.send(embed=embed)
     except asyncio.TimeoutError:
         embed = discord.Embed(
-            title="",
-            description="Request timed out",
+            title="Calculation Timeout",
+            description=f"The calculation took too long (>{CALCULATION_TIMEOUT} seconds) and was cancelled. Please try with smaller bag numbers.",
+            color=discord.Color.orange(),
+        )
+        await interaction.followup.send(embed=embed)
+        return
+    except Exception as e:
+        # Catch any other unexpected errors during calculation
+        embed = discord.Embed(
+            title="Calculation Error",
+            description=f"An unexpected error occurred during calculation: {e}",
             color=discord.Color.red(),
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
+        return
+
+    if not top_sums:
+        embed = discord.Embed(
+            title="",
+            description="Something went wrong during calculation.",
+            color=discord.Color.red(),
+        )
+        await interaction.followup.send(embed=embed)
+        return
+
+    embed = discord.Embed(
+        title="",
+        description="",
+        color=discord.Color.red(),
+    )
+    embed.add_field(
+        name="--- Parameters ---",
+        value=f"Bag I Draws: {bag1}\nBag II Draws: {bag2}\nTarget Soulstones (at least): {ss}",
+        inline=False,
+    )
+    embed.add_field(
+        name="--- Pre-results ---",
+        value=f"Average Soulstones Expected: {3.75*bag1+18.95*bag2}",
+        inline=False,
+    )
+    embed.add_field(
+        name="--- Results ---",
+        value=f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%",
+        inline=False,
+    )
+    embed.add_field(
+        name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
+        value=(
+            f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]*100:.4f}%\n"
+            f" 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]*100:.4f}%\n"
+            f" 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]*100:.4f}%"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="",
+        value=f"Bot made by <@{OWNER}>",
+        inline=False,
+    )
+    await interaction.followup.send(embed=embed)
+
+
+@bags_slash.error
+async def bags_slash_error(
+    interaction: discord.Interaction, error: app_commands.AppCommandError
+):
+    if isinstance(error, app_commands.CommandOnCooldown):
+        await interaction.response.send_message(
+            f"This command is on cooldown. Please try again after {error.retry_after:.2f} seconds.",
+            ephemeral=True,
+        )
+    else:
+        # Handle other potential errors for slash commands if needed
+        await interaction.response.send_message(
+            f"An unexpected error occurred: {error}", ephemeral=True
+        )
 
 
 @bot.event
@@ -298,54 +379,6 @@ async def on_guild_join(guild):
     )
 
     await guild.system_channel.send(embed=embed)
-
-
-# @client.tree.command(name="hello", description="Say hello!", guild=GUILD_ID)
-# async def sayHello(interaction: discord.Interaction):
-#    await interaction.response.send_message("Hi there!")
-
-
-# @client.tree.command(
-#    name="printer", description="I will print whatever you give me!", guild=GUILD_ID
-# )
-# async def printer(interaction: discord.Interaction, printer: str):
-#    await interaction.response.send_message(printer)
-
-
-# @client.tree.command(name="embed", description="Embed demo!", guild=GUILD_ID)
-# async def embed(interaction: discord.Interaction):
-#    embed = discord.Embed(
-#        title="I am a Title",
-#        url="https://google.com",
-#        description="I am the description",
-#        color=discord.Color.red(),
-#    )
-#    embed.set_thumbnail(
-#        url="https://www.androidp1.com/uploads/posts/2022-01/castle-clash-guild-royale.webp"
-#    )
-#    embed.add_field(name="Field 1 Title", value="Description of Field 1", inline=False)
-#    embed.add_field(name="Field 2 Title", value="Description of Field 2")
-#    embed.add_field(name="Field 3 Title", value="Description of Field 3")
-#    embed.set_footer(text="This is the footer!")
-#    await interaction.response.send_message(embed=embed)
-
-
-# @client.tree.command(
-#    name="creator", description="Prints creator of the bot", guild=GUILD_ID
-# )
-# async def creator(interaction: discord.Interaction):
-#    await interaction.response.send_message(f"<@{OWNER_ID}>")
-
-
-# class View(discord.ui.View):
-#    @discord.ui.button(label="Click me!", style=discord.ButtonStyle.red, emoji="🔥")
-#    async def button_callback(self, button, interaction):
-#        await button.response.send_message("You have clicked the button!")
-
-
-# @client.tree.command(name="button", description="Displaying a button", guild=GUILD_ID)
-# async def myButton(interaction: discord.Interaction):
-#    await interaction.response.send_message(view=View())
 
 
 bot.run(TOKEN)
