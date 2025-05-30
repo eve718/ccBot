@@ -11,8 +11,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
-import random
-from collections import Counter
+import collections
 
 from keep_alive import keep_alive
 
@@ -28,83 +27,61 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
-def draw_number(box_definition):
+def calculate_exact_probabilities(box_def, num_draws):
     """
-    Draws a random number from a given box based on its defined probabilities.
+    Calculates the exact probability distribution of sums from a box using dynamic programming.
 
     Args:
-        box_definition (list of dict): A list of dictionaries, where each dict
-                                    has 'value' (the number) and 'prob' (its probability).
+        box_def (list of tuples): List of (value, probability) tuples.
+        num_draws (int): Number of draws.
 
     Returns:
-        int: The drawn number.
+        dict: A dictionary where keys are sums and values are their exact probabilities.
     """
-    rand = random.random()  # Generate a random number between 0 and 1
-    cumulative_probability = 0
+    # Initialize DP state: {sum: probability}
+    # After 0 draws, sum is 0 with 100% probability
+    current_probabilities = {0: 1.0}
 
-    # Iterate through the box items to find which number corresponds to the random value
-    for item in box_definition:
-        cumulative_probability += item[1]
-        if rand < cumulative_probability:
-            return item[0]
+    for _ in range(num_draws):
+        next_probabilities = collections.defaultdict(
+            float
+        )  # Use defaultdict for easier accumulation
+        for prev_sum, prev_prob in current_probabilities.items():
+            for value, prob_of_value in box_def:
+                new_sum = prev_sum + value
+                new_prob = prev_prob * prob_of_value
+                next_probabilities[new_sum] += new_prob
+        current_probabilities = next_probabilities
 
-    # Fallback: In case of floating point inaccuracies, return the last value.
-    # This should rarely be reached if probabilities sum exactly to 1.
-    return box_definition[-1][0]
+    return current_probabilities
 
 
-def run_simulation(
-    box1_def, box2_def, draws_box1, draws_box2, target_sum, num_simulations
-):
-    """
-    Runs the Monte Carlo simulation to estimate probabilities and collect sum frequencies.
+def run_exact_calculation(box1_def, box2_def, draws_box1, draws_box2, target_sum):
+    # Calculate probabilities for Box 1 sums
+    box1_sums_probs = calculate_exact_probabilities(box1_def, draws_box1)
 
-    Args:
-        box1_def (list of dict): Definition of Box 1 (values and probabilities).
-        box2_def (list of dict): Definition of Box 2 (values and probabilities).
-        draws_box1 (int): Number of draws from Box 1.
-        draws_box2 (int): Number of draws from Box 2.
-        target_sum (int): The sum that needs to be reached or exceeded for the primary calculation.
-        num_simulations (int): The total number of simulation trials to run.
+    # Calculate probabilities for Box 2 sums
+    box2_sums_probs = calculate_exact_probabilities(box2_def, draws_box2)
 
-    Returns:
-        tuple: A tuple containing:
-            - estimated_probability_at_least_target (float): Probability of sum >= target_sum.
-            - successful_outcomes (int): Count of sums >= target_sum.
-            - top_3_sums (list of tuples): List of (sum, probability) for the top 3 most likely sums.
-    """
-    successful_outcomes = 0
-    # Use Counter to efficiently store frequencies of all generated sums
-    sum_frequencies = Counter()
+    # Combine probabilities from Box 1 and Box 2 draws
+    combined_sums_probs = collections.defaultdict(float)
+    for sum1, prob1 in box1_sums_probs.items():
+        for sum2, prob2 in box2_sums_probs.items():
+            combined_sums_probs[sum1 + sum2] += prob1 * prob2
 
-    for _ in range(num_simulations):
-        current_sum = 0
-
-        # Draw from Box 1
-        for _ in range(draws_box1):
-            current_sum += draw_number(box1_def)
-
-        # Draw from Box 2
-        for _ in range(draws_box2):
-            current_sum += draw_number(box2_def)
-
-        # Record the current sum's frequency
-        sum_frequencies[current_sum] += 1
-
-        # Check if the sum meets the target for the primary calculation
-        if current_sum >= target_sum:
-            successful_outcomes += 1
-
-    # Calculate probability for the primary target
-    estimated_probability_at_least_target = (
-        successful_outcomes / num_simulations
-    ) * 100
-
-    return (
-        estimated_probability_at_least_target,
-        successful_outcomes,
-        sum_frequencies.most_common(3),
+    # Calculate probability of sum >= target_sum
+    prob_at_least_target = sum(
+        prob for s, prob in combined_sums_probs.items() if s >= target_sum
     )
+
+    # Get top 3 most likely sums
+    # Convert to list of (sum, probability) and sort
+    sorted_sums = sorted(
+        combined_sums_probs.items(), key=lambda item: item[1], reverse=True
+    )
+    top_3_sums_with_probs = [(s, p) for s, p in sorted_sums[:3]]
+
+    return (prob_at_least_target * 100, top_3_sums_with_probs)  # Convert to percentage
 
 
 def parser(num_draws_box1, num_draws_box2, target_sum_value):
@@ -126,15 +103,12 @@ def parser(num_draws_box1, num_draws_box2, target_sum_value):
         (100, 0.02),
     ]
 
-    number_of_simulations = 1000000
-
-    return run_simulation(
+    return run_exact_calculation(
         box1_definition,
         box2_definition,
         num_draws_box1,
         num_draws_box2,
         target_sum_value,
-        number_of_simulations,
     )
 
 
@@ -219,7 +193,7 @@ async def on_message(message):
         )
         embed.add_field(
             name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
-            value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]/10000:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]/10000:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]/10000:.4f}%",
+            value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]*100:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]*100:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]*100:.4f}%",
             inline=False,
         )
         embed.add_field(
@@ -269,7 +243,7 @@ async def chance(interaction: discord.Interaction, bag1: int, bag2: int, ss: int
     )
     embed.add_field(
         name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
-        value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]/10000:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]/10000:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]/10000:.4f}%",
+        value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]*100:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]*100:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]*1000:.4f}%",
         inline=False,
     )
     embed.add_field(
