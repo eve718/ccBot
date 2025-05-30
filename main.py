@@ -8,10 +8,8 @@ import collections
 import random
 from collections import Counter
 import math
-import numpy as np  # Added for potential future use or if simulate_single_bag_draws was used elsewhere efficiently
+import numpy as np
 
-# You might need to install scipy for the normal approximation tier:
-# pip install scipy
 try:
     from scipy.stats import norm
 
@@ -20,46 +18,38 @@ except ImportError:
     SCIPY_AVAILABLE = False
     print("SciPy not found. Normal approximation will not be available.")
 
-
 from keep_alive import keep_alive
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-OWNER = os.getenv("OWNER_ID")  # Assuming OWNER_ID is the user ID for the bot owner
+OWNER = os.getenv("OWNER_ID")
 
 keep_alive()
 
 intents = discord.Intents.default()
-intents.message_content = True  # Required for prefix commands to read message content
+intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- UI & UX Improvements: Constants and Setup ---
-# Remove the default help command to implement our custom one
 bot.remove_command("help")
 
-CALCULATION_TIMEOUT = 15  # seconds - Adjusted slightly based on your observation
-EXACT_CALC_THRESHOLD_BOX1 = 20  # Max draws for Box 1 using exact method
-EXACT_CALC_THRESHOLD_BOX2 = 20  # Max draws for Box 2 using exact method
+CALCULATION_TIMEOUT = 15
+EXACT_CALC_THRESHOLD_BOX1 = 100
+EXACT_CALC_THRESHOLD_BOX2 = 100
+PROB_DIFFERENCE_THRESHOLD = 0.001
 
-# Probability difference threshold for top sums output
-# If the difference between the 1st and 3rd probabilities is less than this,
-# the "top 3 sums" output will be suppressed.
-# Tune this value: e.g., 0.001 (0.1%), 0.005 (0.5%)
-PROB_DIFFERENCE_THRESHOLD = 0.001  # 0.1% difference
-
-# Define a custom cooldown mapping for prefix commands
 prefix_cooldowns = commands.CooldownMapping.from_cooldown(
-    1, 10, commands.BucketType.user  # 1 use per 10 seconds per user
+    1, 10, commands.BucketType.user
 )
 
+# Global variable to store the owner's display name
+OWNER_DISPLAY_NAME = "Bot Owner"  # Default value in case fetching fails
 
-# --- Core Calculation Logic (unchanged from previous version) ---
+
 async def calculate_exact_probabilities(box_def, num_draws):
     current_probabilities = {0: 1.0}
-
     for _ in range(num_draws):
-        await asyncio.sleep(0)  # Yield control
+        await asyncio.sleep(0)
         next_probabilities = collections.defaultdict(float)
         for prev_sum, prev_prob in current_probabilities.items():
             for value, prob_of_value in box_def:
@@ -67,7 +57,6 @@ async def calculate_exact_probabilities(box_def, num_draws):
                 new_prob = prev_prob * prob_of_value
                 next_probabilities[new_sum] += new_prob
         current_probabilities = next_probabilities
-
     return current_probabilities
 
 
@@ -84,16 +73,13 @@ async def run_exact_calculation(box1_def, box2_def, draws_box1, draws_box2, targ
     prob_at_least_target = sum(
         prob for s, prob in combined_sums_probs.items() if s >= target_sum
     )
-
     sorted_sums = sorted(
         combined_sums_probs.items(), key=lambda item: item[1], reverse=True
     )
     top_3_sums_with_probs = [(s, p) for s, p in sorted_sums[:3]]
-
     return (prob_at_least_target * 100, top_3_sums_with_probs)
 
 
-# Monte Carlo (kept for reference, not used in main path)
 def simulate_single_bag_draws(box_def, num_draws):
     if not box_def or num_draws == 0:
         return 0
@@ -104,7 +90,7 @@ def simulate_single_bag_draws(box_def, num_draws):
     return int(total_sum)
 
 
-async def run_monte_carlo_simulation(  # This function is no longer called by async_parser
+async def run_monte_carlo_simulation(
     box1_def, box2_def, draws_box1, draws_box2, target_sum, num_simulations
 ):
     successful_outcomes = 0
@@ -134,7 +120,6 @@ async def run_monte_carlo_simulation(  # This function is no longer called by as
     return prob_at_least_target, top_3_sums_with_probs
 
 
-# Normal Approximation Logic
 def get_bag_stats(box_def):
     expected_value = sum(val * prob for val, prob in box_def)
     variance = sum((val - expected_value) ** 2 * prob for val, prob in box_def)
@@ -149,10 +134,7 @@ def run_normal_approximation(box1_def, box2_def, draws_box1, draws_box2, target_
     total_std_dev = math.sqrt(total_variance)
     z_score = (target_sum - 0.5 - total_mean) / total_std_dev
     prob_at_least_target = (1 - norm.cdf(z_score)) * 100
-    return (
-        prob_at_least_target,
-        [],
-    )  # Normal approximation doesn't provide top sums directly
+    return prob_at_least_target, []
 
 
 async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
@@ -186,14 +168,12 @@ async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
         )
         method = "exact"
     elif SCIPY_AVAILABLE:
-        result_data = (
-            run_normal_approximation(  # No await needed as it's a sync function
-                box1_definition,
-                box2_definition,
-                num_draws_box1,
-                num_draws_box2,
-                target_sum_value,
-            )
+        result_data = run_normal_approximation(
+            box1_definition,
+            box2_definition,
+            num_draws_box1,
+            num_draws_box2,
+            target_sum_value,
         )
         method = "normal_approx"
     else:
@@ -206,8 +186,21 @@ async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
 # --- Bot Events ---
 @bot.event
 async def on_ready():
-    await bot.tree.sync()  # Sync slash commands
+    global OWNER_DISPLAY_NAME
+    await bot.tree.sync()
     print(f"Logged on as {bot.user}!")
+
+    # Attempt to fetch the owner's user object and set their display name
+    try:
+        owner_user = await bot.fetch_user(int(OWNER))
+        OWNER_DISPLAY_NAME = (
+            owner_user.display_name
+            if hasattr(owner_user, "display_name")
+            else owner_user.name
+        )
+    except (ValueError, discord.NotFound, discord.HTTPException) as e:
+        print(f"Could not fetch owner's name: {e}. Using default 'Bot Owner'.")
+        OWNER_DISPLAY_NAME = "Bot Owner"  # Fallback if owner not found or error
 
 
 @bot.event
@@ -215,9 +208,8 @@ async def on_guild_join(guild):
     embed = discord.Embed(
         title="🎉 Thanks for inviting me!",
         description="Hello! I'm your friendly Soulstone Probability Calculator bot. I can help you determine the chances of getting specific soulstone totals from your bag draws.",
-        color=discord.Color.blue(),  # A welcoming color
+        color=discord.Color.blue(),
     )
-    # Use bot's display_avatar for thumbnail, which is more reliable
     if bot.user and bot.user.display_avatar:
         embed.set_thumbnail(url=bot.user.display_avatar.url)
 
@@ -232,7 +224,7 @@ async def on_guild_join(guild):
             "Calculates the probability of getting at least a target amount of soulstones.\n"
             "**Usage:** `/bags bag1:<number> bag2:<number> ss:<target_sum>`\n"
             "**Example:** `/bags bag1:10 bag2:5 ss:200`\n"
-            "*(This will calculate the chance of getting at least 200 soulstones from 10 Bag I and 5 Bag II draws.)*"
+            "*(This is the recommended way to use the bot!)*"
         ),
         inline=False,
     )
@@ -249,9 +241,8 @@ async def on_guild_join(guild):
         value="Type `/help` or `!help` for detailed command information and tips.",
         inline=False,
     )
-    embed.set_footer(text=f"Bot developed by <@{OWNER}>")
+    embed.set_footer(text=f"Bot developed by {OWNER_DISPLAY_NAME}")  # Updated footer
 
-    # Try to send to system channel, otherwise find a suitable text channel
     if guild.system_channel:
         await guild.system_channel.send(embed=embed)
     else:
@@ -259,6 +250,83 @@ async def on_guild_join(guild):
             if channel.permissions_for(guild.me).send_messages:
                 await channel.send(embed=embed)
                 break
+
+
+# --- Embed Generation Function to ensure identical embeds ---
+async def create_bags_embed(
+    bag1, bag2, ss, prob_at_least_target, top_sums, method_used
+):
+    embed = discord.Embed(
+        title="📊 Soulstone Probability Results",
+        description="Here are the calculation results for your bag draws:",
+        color=(
+            discord.Color.green() if prob_at_least_target > 0 else discord.Color.red()
+        ),
+    )
+    if bot.user and bot.user.display_avatar:
+        embed.set_thumbnail(url=bot.user.display_avatar.url)
+
+    embed.add_field(
+        name="🔢 Input Parameters",
+        value=f"**Bag I Draws:** `{bag1}`\n**Bag II Draws:** `{bag2}`\n**Target Soulstones (at least):** `{ss}`",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="📈 Expected Average",
+        value=f"Your average expected soulstones are: `{3.75*bag1+18.95*bag2:.2f}`",
+        inline=False,
+    )
+
+    calculation_method_note = ""
+    if method_used == "normal_approx":
+        calculation_method_note = (
+            "\n*(Result is an approximation based on Normal Distribution)*"
+        )
+    elif method_used == "exact":
+        calculation_method_note = "\n*(Result is exact)*"
+
+    embed.add_field(
+        name="✅ Probability Result",
+        value=(
+            f"**Probability of Soulstones being at least `{ss}`:** `{prob_at_least_target:.4f}%`"
+            f"{calculation_method_note}\n"
+            f"*Calculation Method: {method_used.replace('_', ' ').title()}*"
+        ),
+        inline=False,
+    )
+
+    if method_used == "exact":
+        top_sums_text = ""
+        padded_top_sums = top_sums + [(0, 0.0)] * (3 - len(top_sums))
+
+        if (
+            len(top_sums) >= 3
+            and abs(padded_top_sums[0][1] - padded_top_sums[2][1])
+            < PROB_DIFFERENCE_THRESHOLD
+        ):
+            top_sums_text = f"Top sums are too close in probability (difference between 1st and 3rd < `{PROB_DIFFERENCE_THRESHOLD*100:.2f}%`) to be meaningfully distinct."
+        elif len(top_sums) < 1 or (len(top_sums) >= 1 and padded_top_sums[0][1] == 0.0):
+            top_sums_text = "No prominent sums found or calculated."
+        else:
+            for i, (s, p) in enumerate(padded_top_sums[:3]):
+                if p > 0:
+                    top_sums_text += (
+                        f" `{i+1}`. Total Soulstones: `{s}`, Chance: `{p*100:.4f}%`\n"
+                    )
+            if not top_sums_text:
+                top_sums_text = "No prominent sums found or calculated."
+
+        embed.add_field(
+            name="🥇🥈🥉 Top 3 Most Likely Total Soulstones Counts",
+            value=top_sums_text.strip(),
+            inline=False,
+        )
+
+    embed.set_footer(
+        text=f"Calculated by {bot.user.name} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')} | Made by {OWNER_DISPLAY_NAME}"
+    )  # Updated footer
+    return embed
 
 
 # --- Prefix Commands ---
@@ -277,7 +345,7 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
         return
 
     if bag1 < 0 or bag2 < 0 or ss < 0:
-        bucket.reset()  # Reset cooldown if invalid input
+        bucket.reset()
         embed = discord.Embed(
             title="❌ Invalid Input",
             description="Numbers of bags and soulstones goal must be non-negative integers.",
@@ -330,83 +398,10 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
         await initial_message.edit(content=None, embed=embed)
         return
 
-    # --- Result Embed Construction (Improved UI) ---
-    embed = discord.Embed(
-        title="📊 Soulstone Probability Results",
-        description="Here are the calculation results for your bag draws:",
-        color=(
-            discord.Color.green() if prob_at_least_target > 0 else discord.Color.red()
-        ),
+    final_embed = await create_bags_embed(
+        bag1, bag2, ss, prob_at_least_target, top_sums, method_used
     )
-    # Using a relevant thumbnail if available or a generic icon
-    # You can replace this URL with your preferred icon
-    embed.set_thumbnail(
-        url="https://imgur.com/a/ozvHheV"
-    )  # Example: a coin bag or calculator icon
-
-    embed.add_field(
-        name="🔢 Input Parameters",
-        value=f"**Bag I Draws:** `{bag1}`\n**Bag II Draws:** `{bag2}`\n**Target Soulstones (at least):** `{ss}`",
-        inline=False,
-    )
-
-    embed.add_field(
-        name="📈 Expected Average",
-        value=f"Your average expected soulstones are: `{3.75*bag1+18.95*bag2:.2f}`",
-        inline=False,  # Set to False for better readability on smaller fields
-    )
-
-    calculation_method_note = ""
-    if method_used == "normal_approx":
-        calculation_method_note = (
-            "\n*(Result is an approximation based on Normal Distribution)*"
-        )
-    elif method_used == "exact":
-        calculation_method_note = "\n*(Result is exact)*"
-
-    embed.add_field(
-        name="✅ Probability Result",
-        value=(
-            f"**Probability of Soulstones being at least `{ss}`:** `{prob_at_least_target:.4f}%`"
-            f"{calculation_method_note}\n"
-            f"*Calculation Method: {method_used.replace('_', ' ').title()}*"
-        ),
-        inline=False,
-    )
-
-    # Conditionally add the "Top 3 sums" field (only for exact method)
-    if method_used == "exact":
-        top_sums_text = ""
-        padded_top_sums = top_sums + [(0, 0.0)] * (3 - len(top_sums))
-
-        # Check if there are at least 3 sums AND if the difference between the 1st and 3rd is too small
-        if (
-            len(top_sums) >= 3
-            and abs(padded_top_sums[0][1] - padded_top_sums[2][1])
-            < PROB_DIFFERENCE_THRESHOLD
-        ):
-            top_sums_text = f"Top sums are too close in probability (difference between 1st and 3rd < `{PROB_DIFFERENCE_THRESHOLD*100:.2f}%`) to be meaningfully distinct."
-        elif len(top_sums) < 1 or (len(top_sums) >= 1 and padded_top_sums[0][1] == 0.0):
-            top_sums_text = "No prominent sums found or calculated."
-        else:
-            for i, (s, p) in enumerate(padded_top_sums[:3]):
-                if p > 0:
-                    top_sums_text += (
-                        f" `{i+1}`. Total Soulstones: `{s}`, Chance: `{p*100:.4f}%`\n"
-                    )
-            if not top_sums_text:
-                top_sums_text = "No prominent sums found or calculated."
-
-        embed.add_field(
-            name="🥇🥈🥉 Top 3 Most Likely Total Soulstones Counts",
-            value=top_sums_text.strip(),
-            inline=False,
-        )
-
-    embed.set_footer(
-        text=f"Calculated by {bot.user.name} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}"
-    )
-    await initial_message.edit(content=None, embed=embed)
+    await initial_message.edit(content=None, embed=final_embed)
 
 
 @bags_prefix.error
@@ -440,7 +435,7 @@ async def bags_prefix_error(ctx, error):
         await ctx.send(embed=embed)
 
 
-# --- Help Commands (New) ---
+# --- Help Commands ---
 @bot.command(name="help")
 async def help_command_prefix(ctx):
     embed = discord.Embed(
@@ -480,8 +475,8 @@ async def help_command_prefix(ctx):
         inline=False,
     )
     embed.set_footer(
-        text=f"Bot made by <@{OWNER}> | Use /help for slash command version"
-    )
+        text=f"Bot made by {OWNER_DISPLAY_NAME} | Use /help for slash command version"
+    )  # Updated footer
     await ctx.send(embed=embed)
 
 
@@ -495,13 +490,9 @@ async def help_command_prefix(ctx):
     bag2="Number of Bag II draws",
     ss="Target Soulstones (at least)",
 )
-@app_commands.checks.cooldown(
-    1, 10, key=lambda i: i.user.id  # 1 use per 10 seconds per user
-)
+@app_commands.checks.cooldown(1, 10, key=lambda i: i.user.id)
 async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss: int):
-    await interaction.response.defer(
-        thinking=True, ephemeral=True
-    )  # Defer as ephemeral initially
+    await interaction.response.defer(thinking=True, ephemeral=True)
 
     if bag1 < 0 or bag2 < 0 or ss < 0:
         embed = discord.Embed(
@@ -512,7 +503,6 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
         await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
-    # Update initial defer message (now visible to everyone if ephemeral=False)
     calculation_method_display = "Calculating..."
     if bag1 <= EXACT_CALC_THRESHOLD_BOX1 and bag2 <= EXACT_CALC_THRESHOLD_BOX2:
         calculation_method_display = "Calculating (Exact Method)..."
@@ -535,9 +525,7 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
             description=f"The calculation took too long (more than `{CALCULATION_TIMEOUT}` seconds) and was cancelled. Please try with smaller bag numbers.",
             color=discord.Color.orange(),
         )
-        await interaction.followup.send(
-            embed=embed, ephemeral=False
-        )  # Send public error
+        await interaction.followup.send(embed=embed, ephemeral=False)
         return
     except ValueError as e:
         embed = discord.Embed(
@@ -556,82 +544,10 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
         await interaction.followup.send(embed=embed, ephemeral=False)
         return
 
-    # --- Result Embed Construction (Improved UI for Slash) ---
-    embed = discord.Embed(
-        title="📊 Soulstone Probability Results",
-        description="Here are the calculation results for your bag draws:",
-        color=(
-            discord.Color.green() if prob_at_least_target > 0 else discord.Color.red()
-        ),
+    final_embed = await create_bags_embed(
+        bag1, bag2, ss, prob_at_least_target, top_sums, method_used
     )
-    if bot.user and bot.user.display_avatar:
-        embed.set_thumbnail(
-            url="https://imgur.com/a/ozvHheV"
-        )  # Example: a coin bag or calculator icon
-
-    embed.add_field(
-        name="🔢 Input Parameters",
-        value=f"**Bag I Draws:** `{bag1}`\n**Bag II Draws:** `{bag2}`\n**Target Soulstones (at least):** `{ss}`",
-        inline=False,
-    )
-    embed.add_field(
-        name="📈 Expected Average",
-        value=f"Your average expected soulstones are: `{3.75*bag1+18.95*bag2:.2f}`",
-        inline=False,
-    )
-
-    calculation_method_note = ""
-    if method_used == "normal_approx":
-        calculation_method_note = (
-            "\n*(Result is an approximation based on Normal Distribution)*"
-        )
-    elif method_used == "exact":
-        calculation_method_note = "\n*(Result is exact)*"
-
-    embed.add_field(
-        name="✅ Probability Result",
-        value=(
-            f"**Probability of Soulstones being at least `{ss}`:** `{prob_at_least_target:.4f}%`"
-            f"{calculation_method_note}\n"
-            f"*Calculation Method: {method_used.replace('_', ' ').title()}*"
-        ),
-        inline=False,
-    )
-
-    # Conditionally add the "Top 3 sums" field (only for exact method)
-    if method_used == "exact":
-        top_sums_text = ""
-        padded_top_sums = top_sums + [(0, 0.0)] * (3 - len(top_sums))
-
-        if (
-            len(top_sums) >= 3
-            and abs(padded_top_sums[0][1] - padded_top_sums[2][1])
-            < PROB_DIFFERENCE_THRESHOLD
-        ):
-            top_sums_text = f"Top sums are too close in probability (difference between 1st and 3rd < `{PROB_DIFFERENCE_THRESHOLD*100:.2f}%`) to be meaningfully distinct."
-        elif len(top_sums) < 1 or (len(top_sums) >= 1 and padded_top_sums[0][1] == 0.0):
-            top_sums_text = "No prominent sums found or calculated."
-        else:
-            for i, (s, p) in enumerate(padded_top_sums[:3]):
-                if p > 0:
-                    top_sums_text += (
-                        f" `{i+1}`. Total Soulstones: `{s}`, Chance: `{p*100:.4f}%`\n"
-                    )
-            if not top_sums_text:
-                top_sums_text = "No prominent sums found or calculated."
-
-        embed.add_field(
-            name="🥇🥈🥉 Top 3 Most Likely Total Soulstones Counts",
-            value=top_sums_text.strip(),
-            inline=False,
-        )
-
-    embed.set_footer(
-        text=f"Calculated by {bot.user.name} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}"
-    )
-    await interaction.followup.send(
-        embed=embed, ephemeral=False
-    )  # Send the final result publically
+    await interaction.followup.send(embed=final_embed, ephemeral=False)
 
 
 @bags_slash.error
@@ -644,9 +560,7 @@ async def bags_slash_error(
             description=f"This command is on cooldown for you. Please try again after `{error.retry_after:.2f}` seconds.",
             color=discord.Color.orange(),
         )
-        await interaction.followup.send(
-            embed=embed, ephemeral=True
-        )  # Use followup as defer already happened
+        await interaction.followup.send(embed=embed, ephemeral=True)
     elif isinstance(error, app_commands.BadArgument):
         embed = discord.Embed(
             title="❌ Invalid Input Type",
@@ -701,11 +615,11 @@ async def help_command_slash(interaction: discord.Interaction):
             "• Automatically selects the best calculation method (exact for smaller inputs, Normal Approximation for larger).\n"
             "• Provides the average expected soulstones.\n"
             "• Displays the top 3 most likely sums for exact calculations (if distinct enough).\n"
-            "• Cooldown of `10 seconds` per user for commands."
+            "• Cooldown of `10 seconds` per user to prevent spam."
         ),
         inline=False,
     )
-    embed.set_footer(text=f"Bot made by <@{OWNER}>")
+    embed.set_footer(text=f"Bot made by {OWNER_DISPLAY_NAME}")  # Updated footer
     await interaction.response.send_message(embed=embed, ephemeral=False)
 
 
