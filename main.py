@@ -8,6 +8,7 @@ import collections
 import random
 from collections import Counter
 import math  # For math.sqrt
+import numpy as np
 
 # You might need to install scipy for the normal approximation tier:
 # pip install scipy
@@ -37,16 +38,16 @@ CALCULATION_TIMEOUT = 15  # seconds - Adjusted slightly based on your observatio
 # Define thresholds for switching calculation methods
 # You will need to TUNE these based on actual performance on your host.
 # Start conservative and increase if stable.
-EXACT_CALC_THRESHOLD_BOX1 = 15  # Max draws for Box 1 using exact method
-EXACT_CALC_THRESHOLD_BOX2 = 15  # Max draws for Box 2 using exact method
+EXACT_CALC_THRESHOLD_BOX1 = 20  # Max draws for Box 1 using exact method
+EXACT_CALC_THRESHOLD_BOX2 = 20  # Max draws for Box 2 using exact method
 
 MONTE_CARLO_SIMULATIONS_DEFAULT = 1_000_000  # Number of simulations for Monte Carlo
 
 # This threshold is where Monte Carlo might become too slow,
 # and Normal Approximation is better.
 # For 40,40, this might be around 25-30, let's test.
-MONTE_CARLO_THRESHOLD_BOX1 = 25  # Max draws for Box 1 using Monte Carlo
-MONTE_CARLO_THRESHOLD_BOX2 = 25  # Max draws for Box 2 using Monte Carlo
+MONTE_CARLO_THRESHOLD_BOX1 = 30  # Max draws for Box 1 using Monte Carlo
+MONTE_CARLO_THRESHOLD_BOX2 = 30  # Max draws for Box 2 using Monte Carlo
 
 
 # Define a custom cooldown mapping for prefix commands
@@ -101,19 +102,20 @@ async def run_exact_calculation(box1_def, box2_def, draws_box1, draws_box2, targ
 # --- Monte Carlo Simulation Logic ---
 async def simulate_single_bag_draws(box_def, num_draws):
     """Simulates drawing `num_draws` times from a single `box_def`."""
-    total_sum = 0
-    # Create a flattened list of values based on their probabilities
-    # For better precision, scale up the probabilities to integers for range()
-    weighted_values = []
-    for val, prob in box_def:
-        weighted_values.extend([val] * int(prob * 10000))  # Scale by 10000
+    if not box_def:
+        return 0
 
-    if not weighted_values:
-        return 0  # Should ideally not happen with valid box def
+    # Separate values and probabilities
+    values = np.array([val for val, prob in box_def])
+    probabilities = np.array([prob for val, prob in box_def])
 
-    for _ in range(num_draws):
-        total_sum += random.choice(weighted_values)
-    return total_sum
+    # Normalize probabilities just in case (though your defs sum to 1)
+    probabilities /= probabilities.sum()
+
+    # Use numpy's choice for vectorized drawing
+    # This is significantly faster than random.choice in a Python loop
+    draws = np.random.choice(values, size=num_draws, p=probabilities)
+    return int(draws.sum())  # sum the numpy array and return as int
 
 
 async def run_monte_carlo_simulation(
@@ -205,58 +207,50 @@ async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
         num_draws_box1 <= EXACT_CALC_THRESHOLD_BOX1
         and num_draws_box2 <= EXACT_CALC_THRESHOLD_BOX2
     ):
-        result, method = (
-            await run_exact_calculation(
-                box1_definition,
-                box2_definition,
-                num_draws_box1,
-                num_draws_box2,
-                target_sum_value,
-            ),
-            "exact",
+        result_data = await run_exact_calculation(  # Await the function call
+            box1_definition,
+            box2_definition,
+            num_draws_box1,
+            num_draws_box2,
+            target_sum_value,
         )
+        method = "exact"
     elif (
         num_draws_box1 <= MONTE_CARLO_THRESHOLD_BOX1
         and num_draws_box2 <= MONTE_CARLO_THRESHOLD_BOX2
     ) or not SCIPY_AVAILABLE:
-        result, method = (
-            await run_monte_carlo_simulation(
-                box1_definition,
-                box2_definition,
-                num_draws_box1,
-                num_draws_box2,
-                target_sum_value,
-                num_simulations=MONTE_CARLO_SIMULATIONS_DEFAULT,
-            ),
-            "monte_carlo",
+        result_data = await run_monte_carlo_simulation(  # Await the function call
+            box1_definition,
+            box2_definition,
+            num_draws_box1,
+            num_draws_box2,
+            target_sum_value,
+            num_simulations=MONTE_CARLO_SIMULATIONS_DEFAULT,
         )
+        method = "monte_carlo"
     elif SCIPY_AVAILABLE:
-        result, method = (
-            await run_normal_approximation(
-                box1_definition,
-                box2_definition,
-                num_draws_box1,
-                num_draws_box2,
-                target_sum_value,
-            ),
-            "normal_approx",
+        result_data = await run_normal_approximation(  # Await the function call
+            box1_definition,
+            box2_definition,
+            num_draws_box1,
+            num_draws_box2,
+            target_sum_value,
         )
+        method = "normal_approx"
     else:  # Fallback if for some reason none of the above hit and scipy isn't there
         # This should be covered by the `not SCIPY_AVAILABLE` above, but as a safeguard.
-        result, method = (
-            await run_monte_carlo_simulation(
-                box1_definition,
-                box2_definition,
-                num_draws_box1,
-                num_draws_box2,
-                target_sum_value,
-                num_simulations=MONTE_CARLO_SIMULATIONS_DEFAULT
-                // 10,  # Fewer simulations for extremely large inputs
-            ),
-            "monte_carlo_fallback",
+        result_data = await run_monte_carlo_simulation(  # Await the function call
+            box1_definition,
+            box2_definition,
+            num_draws_box1,
+            num_draws_box2,
+            target_sum_value,
+            num_simulations=MONTE_CARLO_SIMULATIONS_DEFAULT
+            // 10,  # Fewer simulations for extremely large inputs
         )
+        method = "monte_carlo_fallback"
 
-    return result, method
+    return result_data, method
 
 
 @bot.event
