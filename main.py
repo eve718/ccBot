@@ -38,8 +38,8 @@ CALCULATION_TIMEOUT = 15  # seconds - Adjusted slightly based on your observatio
 # Define thresholds for switching calculation methods
 # You will need to TUNE these based on actual performance on your host.
 # Start conservative and increase if stable.
-EXACT_CALC_THRESHOLD_BOX1 = 20  # Max draws for Box 1 using exact method
-EXACT_CALC_THRESHOLD_BOX2 = 20  # Max draws for Box 2 using exact method
+EXACT_CALC_THRESHOLD_BOX1 = 100  # Max draws for Box 1 using exact method
+EXACT_CALC_THRESHOLD_BOX2 = 100  # Max draws for Box 2 using exact method
 
 # MONTE_CARLO_SIMULATIONS_DEFAULT = 1_000_000 # No longer used in main path
 # MONTE_CARLO_THRESHOLD_BOX1 = 25 # No longer used
