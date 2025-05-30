@@ -23,6 +23,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # You might need to adjust this based on your bot's resources and expected maximum input size.
 CALCULATION_TIMEOUT = 10  # seconds
 
+# Define a custom cooldown mapping for prefix commands
+# This allows us to manually trigger and reset cooldowns
+prefix_cooldowns = commands.CooldownMapping.from_cooldown(
+    1, 10, commands.BucketType.user
+)
+
 
 async def calculate_exact_probabilities(box_def, num_draws):
     """
@@ -124,15 +130,23 @@ async def on_ready():
     name="bags",
     description="Will calc the chance to obtain at least [ss] soulstones from [bag1] bags I plus [bag2] bags II",
 )
-@commands.cooldown(1, 10, commands.BucketType.user)  # 1 use per 10 seconds per user
 async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
     """
     Calculates soulstone probabilities for prefix command !bags.
     """
+    # Check cooldown BEFORE performing calculation or input validation
+    bucket = prefix_cooldowns.get_bucket(ctx.message)
+    retry_after = bucket.update_rate_limit()
+
+    if retry_after:
+        await ctx.send(
+            f"This command is on cooldown. Please try again after {retry_after:.2f} seconds."
+        )
+        return
+
     if bag1 < 0 or bag2 < 0 or ss < 0:
-        # If input is invalid, reset the cooldown for this user.
-        # This is the key change to prevent cooldowns on bad input.
-        bags_prefix.reset_cooldown(ctx)
+        # If input is invalid, we don't want to apply cooldown, so we "refund" the charge
+        bucket.reset()  # This resets the cooldown for this bucket
         embed = discord.Embed(
             title="",
             description="Wrong input. Numbers of bags and soulstones goal must be non-negative.",
@@ -378,7 +392,14 @@ async def on_guild_join(guild):
         inline=False,
     )
 
-    await guild.system_channel.send(embed=embed)
+    # Attempt to send to the system channel, fall back to the first text channel if system channel is None
+    if guild.system_channel:
+        await guild.system_channel.send(embed=embed)
+    else:
+        for channel in guild.text_channels:
+            if channel.permissions_for(guild.me).send_messages:
+                await channel.send(embed=embed)
+                break
 
 
 bot.run(TOKEN)
