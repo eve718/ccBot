@@ -41,9 +41,12 @@ CALCULATION_TIMEOUT = 15  # seconds - Adjusted slightly based on your observatio
 EXACT_CALC_THRESHOLD_BOX1 = 100  # Max draws for Box 1 using exact method
 EXACT_CALC_THRESHOLD_BOX2 = 100  # Max draws for Box 2 using exact method
 
-# MONTE_CARLO_SIMULATIONS_DEFAULT = 1_000_000 # No longer used in main path
-# MONTE_CARLO_THRESHOLD_BOX1 = 25 # No longer used
-# MONTE_CARLO_THRESHOLD_BOX2 = 25 # No longer used
+
+# --- NEW: Probability difference threshold for top sums output ---
+# If the difference between the 1st and 3rd probabilities is less than this,
+# the "top 3 sums" output will be suppressed.
+# Tune this value: e.g., 0.001 (0.1%), 0.005 (0.5%)
+PROB_DIFFERENCE_THRESHOLD = 0.001  # 0.1% difference
 
 
 # Define a custom cooldown mapping for prefix commands
@@ -368,13 +371,28 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
         top_sums_text = ""
         # Ensure there are enough elements in top_sums before accessing them
         padded_top_sums = top_sums + [(0, 0.0)] * (3 - len(top_sums))
-        for i, (s, p) in enumerate(padded_top_sums[:3]):
-            if p > 0:  # Only show meaningful entries
-                top_sums_text += (
-                    f" {i+1}. Total Soulstones: {s}, Chance: {p*100:.4f}%\n"
-                )
-        if not top_sums_text:
-            top_sums_text = "No prominent sums found during calculation."
+        # Check if there are at least 3 sums and if the difference between the 1st and 3rd is too small
+        if (
+            len(top_sums) >= 3
+            and abs(padded_top_sums[0][1] - padded_top_sums[2][1])
+            < PROB_DIFFERENCE_THRESHOLD
+        ):
+            top_sums_text = f"Top sums are too close in probability (difference between 1st and 3rd < {PROB_DIFFERENCE_THRESHOLD*100:.2f}%) to be meaningfully distinct."
+        elif (
+            len(top_sums) < 1 or padded_top_sums[0][1] == 0.0
+        ):  # No sums found or 0 probability
+            top_sums_text = "No prominent sums found or calculated."
+        else:
+            # If the condition above isn't met, display the top sums
+            for i, (s, p) in enumerate(padded_top_sums[:3]):
+                if p > 0:  # Only show meaningful entries
+                    top_sums_text += (
+                        f" {i+1}. Total Soulstones: {s}, Chance: {p*100:.4f}%\n"
+                    )
+            if (
+                not top_sums_text
+            ):  # Fallback if for some reason the loop above didn't produce text
+                top_sums_text = "No prominent sums found or calculated."
 
         embed.add_field(
             name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
@@ -517,13 +535,24 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
     if method_used == "exact":
         top_sums_text = ""
         padded_top_sums = top_sums + [(0, 0.0)] * (3 - len(top_sums))
-        for i, (s, p) in enumerate(padded_top_sums[:3]):
-            if p > 0:
-                top_sums_text += (
-                    f" {i+1}. Total Soulstones: {s}, Chance: {p*100:.4f}%\n"
-                )
-        if not top_sums_text:
-            top_sums_text = "No prominent sums found during calculation."
+        # Check if there are at least 3 sums AND if the difference between the 1st and 3rd is too small
+        # Also handle cases where less than 3 sums are available or the probabilities are 0.
+        if len(top_sums) < 3 or (
+            len(top_sums) >= 3
+            and abs(padded_top_sums[0][1] - padded_top_sums[2][1])
+            < PROB_DIFFERENCE_THRESHOLD
+        ):
+            if len(top_sums) < 1 or padded_top_sums[0][1] == 0.0:
+                top_sums_text = "No prominent sums found or calculated."
+            else:
+                top_sums_text = f"Top sums are too close in probability (difference between 1st and 3rd < {PROB_DIFFERENCE_THRESHOLD*100:.2f}%) to be meaningfully distinct."
+        else:
+            # If the condition above isn't met, display the top sums
+            for i, (s, p) in enumerate(padded_top_sums[:3]):
+                if p > 0:
+                    top_sums_text += (
+                        f" {i+1}. Total Soulstones: {s}, Chance: {p*100:.4f}%\n"
+                    )
 
         embed.add_field(
             name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
