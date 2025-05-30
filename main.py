@@ -124,8 +124,8 @@ async def on_message(message):
         return
 
     content = message.content
-    if content[0:8] == "!chance ":
-        info = content[8:].split(",")
+    if content[0:6] == "!bags ":
+        info = content[6:].split(",")
 
         if len(info) != 3:
             embed = discord.Embed(
@@ -134,7 +134,7 @@ async def on_message(message):
                 color=discord.Color.red(),
             )
             embed.add_field(
-                name="!chance [number of bags I], [number of bags II], [soulstones goal]",
+                name="!bags [number of bags I], [number of bags II], [soulstones goal]",
                 value="",
             )
             await message.channel.send(embed=embed)
@@ -152,7 +152,7 @@ async def on_message(message):
                     color=discord.Color.red(),
                 )
                 embed.add_field(
-                    name="!chance [number of bags I], [number of bags II], [soulstones goal]",
+                    name="!bags [number of bags I], [number of bags II], [soulstones goal]",
                     value="",
                 )
                 await message.channel.send(embed=embed)
@@ -203,7 +203,7 @@ async def on_message(message):
 
 
 @bot.tree.command(
-    name="chance",
+    name="bags",
     description=f"Will calc the chance to obtain at least [ss] soulstones from [bag1] bags I plus [bag2] bags II",
 )
 async def chance(interaction: discord.Interaction, bag1: int, bag2: int, ss: int):
@@ -266,8 +266,13 @@ async def on_guild_join(guild):
         inline=False,
     )
     embed.add_field(
-        name=" 1. !chance [number of bags I], [number of bags II], [soulstones goal]",
+        name=" 1. !bags [number of bags I], [number of bags II], [soulstones goal]",
         value="This will calc the chance to obtain at least [soulstones goal] soulstones from [number of bags I] bags I plus [number of bags II] bags II",
+        inline=False,
+    )
+    embed.add_field(
+        name=" 2. /bags [bag1], [bag2], [ss]",
+        value="This will calc the chance to obtain at least [ss] soulstones from [bag1] bags I plus [bag2] bags II",
         inline=False,
     )
 
