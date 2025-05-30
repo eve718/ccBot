@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 import collections
 import random
 from collections import Counter
-import math  # For math.sqrt
-import numpy as np
+import math
+import numpy as np  # ADD THIS IMPORT
 
 # You might need to install scipy for the normal approximation tier:
 # pip install scipy
@@ -46,8 +46,8 @@ MONTE_CARLO_SIMULATIONS_DEFAULT = 1_000_000  # Number of simulations for Monte C
 # This threshold is where Monte Carlo might become too slow,
 # and Normal Approximation is better.
 # For 40,40, this might be around 25-30, let's test.
-MONTE_CARLO_THRESHOLD_BOX1 = 30  # Max draws for Box 1 using Monte Carlo
-MONTE_CARLO_THRESHOLD_BOX2 = 30  # Max draws for Box 2 using Monte Carlo
+MONTE_CARLO_THRESHOLD_BOX1 = 25  # Max draws for Box 1 using Monte Carlo
+MONTE_CARLO_THRESHOLD_BOX2 = 25  # Max draws for Box 2 using Monte Carlo
 
 
 # Define a custom cooldown mapping for prefix commands
@@ -100,22 +100,23 @@ async def run_exact_calculation(box1_def, box2_def, draws_box1, draws_box2, targ
 
 
 # --- Monte Carlo Simulation Logic ---
+# Optimized simulate_single_bag_draws using NumPy
 async def simulate_single_bag_draws(box_def, num_draws):
-    """Simulates drawing `num_draws` times from a single `box_def`."""
-    if not box_def:
+    """Simulates drawing `num_draws` times from a single `box_def` using NumPy."""
+    if not box_def or num_draws == 0:  # Handle empty box_def or zero draws
         return 0
 
-    # Separate values and probabilities
+    # Separate values and probabilities using NumPy arrays for efficiency
     values = np.array([val for val, prob in box_def])
     probabilities = np.array([prob for val, prob in box_def])
 
-    # Normalize probabilities just in case (though your defs sum to 1)
+    # Normalize probabilities in case of floating point inaccuracies (good practice)
     probabilities /= probabilities.sum()
 
-    # Use numpy's choice for vectorized drawing
-    # This is significantly faster than random.choice in a Python loop
-    draws = np.random.choice(values, size=num_draws, p=probabilities)
-    return int(draws.sum())  # sum the numpy array and return as int
+    # Use numpy's choice for vectorized drawing and sum the results
+    # This avoids a Python loop for each draw
+    total_sum = np.random.choice(values, size=num_draws, p=probabilities).sum()
+    return int(total_sum)  # Ensure integer return
 
 
 async def run_monte_carlo_simulation(
@@ -126,16 +127,38 @@ async def run_monte_carlo_simulation(
     Corrected logic: simulate the *total* outcome `num_simulations` times.
     """
     successful_outcomes = 0
-    combined_sums_for_stats = []  # To gather sums for top 3 and average
+    combined_sums_for_stats = []
+
+    # Pre-process box definitions into NumPy arrays once
+    values1 = np.array([val for val, prob in box1_def])
+    probabilities1 = np.array([prob for val, prob in box1_def])
+    probabilities1 /= probabilities1.sum()  # Normalize
+
+    values2 = np.array([val for val, prob in box2_def])
+    probabilities2 = np.array([prob for val, prob in box2_def])
+    probabilities2 /= probabilities2.sum()  # Normalize
+
+    # Determine a batch size for yielding control
+    # This allows more frequent yielding if simulations are very fast per iteration
+    batch_size = max(
+        1, num_simulations // 1000
+    )  # Yield at least 1000 times over total simulations
 
     for i in range(num_simulations):
-        # Yield control periodically to prevent blocking
-        if i % 10000 == 0:  # Yield every 10,000 simulations
+        if i % batch_size == 0:  # Yield control periodically
             await asyncio.sleep(0)
 
-        sum1 = await simulate_single_bag_draws(box1_def, draws_box1)
-        sum2 = await simulate_single_bag_draws(box2_def, draws_box2)
-        total_sum = sum1 + sum2
+        # Use the optimized (NumPy-based) simulate_single_bag_draws
+        # Note: If simulate_single_bag_draws was also async, you'd await it.
+        # But since we're using numpy, it's efficient enough to call sync here.
+        sum1 = simulate_single_bag_draws(
+            box1_def, draws_box1
+        )  # Not awaiting because it now uses numpy, no internal awaits
+        sum2 = simulate_single_bag_draws(
+            box2_def, draws_box2
+        )  # Not awaiting because it now uses numpy, no internal awaits
+
+        total_sum = await sum1 + await sum2  # AWAIT THE AWAITABLE RESULTS
         combined_sums_for_stats.append(total_sum)
 
         if total_sum >= target_sum:
@@ -143,9 +166,8 @@ async def run_monte_carlo_simulation(
 
     prob_at_least_target = (successful_outcomes / num_simulations) * 100
 
-    # Calculate top 3 most likely sums from simulated data
     sum_counts = Counter(combined_sums_for_stats)
-    top_3_raw = sum_counts.most_common(3)  # Returns list of (sum, count)
+    top_3_raw = sum_counts.most_common(3)
     top_3_sums_with_probs = [(s, count / num_simulations) for s, count in top_3_raw]
 
     return prob_at_least_target, top_3_sums_with_probs
@@ -207,7 +229,7 @@ async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
         num_draws_box1 <= EXACT_CALC_THRESHOLD_BOX1
         and num_draws_box2 <= EXACT_CALC_THRESHOLD_BOX2
     ):
-        result_data = await run_exact_calculation(  # Await the function call
+        result_data = await run_exact_calculation(
             box1_definition,
             box2_definition,
             num_draws_box1,
@@ -219,7 +241,7 @@ async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
         num_draws_box1 <= MONTE_CARLO_THRESHOLD_BOX1
         and num_draws_box2 <= MONTE_CARLO_THRESHOLD_BOX2
     ) or not SCIPY_AVAILABLE:
-        result_data = await run_monte_carlo_simulation(  # Await the function call
+        result_data = await run_monte_carlo_simulation(  # Await this one
             box1_definition,
             box2_definition,
             num_draws_box1,
@@ -229,7 +251,7 @@ async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
         )
         method = "monte_carlo"
     elif SCIPY_AVAILABLE:
-        result_data = await run_normal_approximation(  # Await the function call
+        result_data = run_normal_approximation(  # <<< FIX: REMOVED `await` HERE
             box1_definition,
             box2_definition,
             num_draws_box1,
@@ -237,16 +259,16 @@ async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
             target_sum_value,
         )
         method = "normal_approx"
-    else:  # Fallback if for some reason none of the above hit and scipy isn't there
+    else:
+        # Fallback if for some reason none of the above hit and scipy isn't there
         # This should be covered by the `not SCIPY_AVAILABLE` above, but as a safeguard.
-        result_data = await run_monte_carlo_simulation(  # Await the function call
+        result_data = await run_monte_carlo_simulation(
             box1_definition,
             box2_definition,
             num_draws_box1,
             num_draws_box2,
             target_sum_value,
-            num_simulations=MONTE_CARLO_SIMULATIONS_DEFAULT
-            // 10,  # Fewer simulations for extremely large inputs
+            num_simulations=MONTE_CARLO_SIMULATIONS_DEFAULT // 10,
         )
         method = "monte_carlo_fallback"
 
@@ -321,17 +343,6 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
         )
         await initial_message.edit(content=None, embed=embed)
         return
-
-    # No need for top_sums check here as it might be intentionally empty for normal_approx
-    # if not top_sums and method_used != "normal_approx":
-    #     bucket.reset()
-    #     embed = discord.Embed(
-    #         title="",
-    #         description="Something went wrong during calculation. No sums were generated.",
-    #         color=discord.Color.red(),
-    #     )
-    #     await initial_message.edit(content=None, embed=embed)
-    #     return
 
     embed = discord.Embed(
         title="",
@@ -480,16 +491,6 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
         )
         await interaction.followup.send(embed=embed)
         return
-
-    # No need for top_sums check here as it might be intentionally empty for normal_approx
-    # if not top_sums and method_used != "normal_approx":
-    #     embed = discord.Embed(
-    #         title="",
-    #         description="Something went wrong during calculation. No sums were generated.",
-    #         color=discord.Color.red(),
-    #     )
-    #     await interaction.followup.send(embed=embed)
-    #     return
 
     embed = discord.Embed(
         title="",
