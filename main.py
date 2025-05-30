@@ -259,7 +259,6 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
                     bag1,
                     bag2,
                     ss,
-                    num_simulations=500000,  # Adjust this based on desired accuracy/speed
                 ),
                 timeout=CALCULATION_TIMEOUT,
             )
@@ -311,7 +310,7 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
     result_description = ""
     if not use_exact_calculation:
         result_description += (
-            f"(Results are approximate based on 500000 simulations)\n\n"
+            f"(Results are approximate based on 100000 simulations)\n\n"
         )
     result_description += (
         f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%"
@@ -438,7 +437,6 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
                     bag1,
                     bag2,
                     ss,
-                    num_simulations=500000,  # Adjust this based on desired accuracy/speed
                 ),
                 timeout=CALCULATION_TIMEOUT,
             )
@@ -488,7 +486,7 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
     result_description = ""
     if not use_exact_calculation:
         result_description += (
-            f"(Results are approximate based on 500000 simulations)\n\n"
+            f"(Results are approximate based on 100000 simulations)\n\n"
         )
     result_description += (
         f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%"
