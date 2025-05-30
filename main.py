@@ -5,6 +5,8 @@ from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
 import collections
+import random
+from collections import Counter
 
 from keep_alive import keep_alive
 
@@ -21,7 +23,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Define a reasonable timeout for the calculation (e.g., 10 seconds)
 # You might need to adjust this based on your bot's resources and expected maximum input size.
-CALCULATION_TIMEOUT = 10  # seconds
+CALCULATION_TIMEOUT = 15  # seconds
+EXACT_CALC_THRESHOLD_BOX1 = 30  # Tune these values based on your server's performance
+EXACT_CALC_THRESHOLD_BOX2 = (
+    30  # For example, 20 bags might be your limit for exact calc
+)
+
 
 # Define a custom cooldown mapping for prefix commands
 # This allows us to manually trigger and reset cooldowns
@@ -120,6 +127,58 @@ async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
     )
 
 
+async def simulate_draws(box_def, num_draws):
+    """Simulates one set of draws from a box."""
+    total_sum = 0
+    # Create a flat list of values for random.choice based on probabilities
+    # This is a simple way, more robust ways exist if probabilities are very granular
+    bag_values = [
+        val for val, prob in box_def for _ in range(int(prob * 10000))
+    ]  # Scale up for better representation
+    if not bag_values:  # Should not happen with valid box_def
+        return 0
+
+    for _ in range(num_draws):
+        total_sum += random.choice(bag_values)
+    return total_sum
+
+
+async def run_monte_carlo_simulation(
+    box1_def, box2_def, draws_box1, draws_box2, target_sum, num_simulations=100000
+):
+    """
+    Runs a Monte Carlo simulation for combined bag draws.
+    num_simulations: How many times to simulate the entire process.
+    """
+    successful_outcomes = 0
+    combined_sums = []  # To store all sums for top 3
+
+    for i in range(num_simulations):
+        # Allow the event loop to breathe
+        if i % 1000 == 0:  # Yield every 1000 simulations
+            await asyncio.sleep(0)
+
+        sum1 = await simulate_draws(box1_def, draws_box1)
+        sum2 = await simulate_draws(box2_def, draws_box2)
+        total_sum = sum1 + sum2
+        combined_sums.append(total_sum)
+
+        if total_sum >= target_sum:
+            successful_outcomes += 1
+
+    prob_at_least_target = (successful_outcomes / num_simulations) * 100
+
+    # Get top 3 most likely sums from simulations
+    # Use Counter to count occurrences, then get most common
+    sum_counts = Counter(combined_sums)
+    top_3_sums = sum_counts.most_common(3)  # Returns list of (sum, count)
+
+    # Convert counts to probabilities for display
+    top_3_sums_with_probs = [(s, count / num_simulations) for s, count in top_3_sums]
+
+    return prob_at_least_target, top_3_sums_with_probs
+
+
 @bot.event
 async def on_ready():
     await bot.tree.sync()
@@ -139,9 +198,12 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
     retry_after = bucket.update_rate_limit()
 
     if retry_after:
-        await ctx.send(
-            f"This command is on cooldown. Please try again after {retry_after:.2f} seconds."
+        embed = discord.Embed(
+            title="",
+            description=f"This command is on cooldown. Please try again after {retry_after:.2f} seconds.",
+            color=discord.Color.red(),
         )
+        await ctx.send(embed=embed)
         return
 
     if bag1 < 0 or bag2 < 0 or ss < 0:
@@ -155,13 +217,52 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
         await ctx.send(embed=embed)
         return
 
-    # Acknowledge the command quickly
-    initial_message = await ctx.send("Calculating... This might take a moment.")
+    # Determine if exact calculation or simulation is needed
+    use_exact_calculation = (
+        bag1 <= EXACT_CALC_THRESHOLD_BOX1 and bag2 <= EXACT_CALC_THRESHOLD_BOX2
+    )
+
+    initial_message_text = (
+        "Calculating (exact method)... This might take a moment."
+        if use_exact_calculation
+        else "Calculating (simulation method)... This might take a moment."
+    )
+    initial_message = await ctx.send(initial_message_text)
 
     try:
-        prob_at_least_target, top_sums = await asyncio.wait_for(
-            async_parser(bag1, bag2, ss), timeout=CALCULATION_TIMEOUT
-        )
+        if use_exact_calculation:
+            prob_at_least_target, top_sums = await asyncio.wait_for(
+                async_parser(bag1, bag2, ss), timeout=CALCULATION_TIMEOUT
+            )
+        else:
+            # For simulation, you might want a longer timeout or no timeout for the simulation itself
+            # as it's designed to complete based on num_simulations, not combinatorial size.
+            # But keep the overall timeout for the bot's response.
+            prob_at_least_target, top_sums = await asyncio.wait_for(
+                run_monte_carlo_simulation(
+                    [
+                        (1, 0.36),
+                        (2, 0.37),
+                        (5, 0.15),
+                        (10, 0.07),
+                        (20, 0.03),
+                        (30, 0.02),
+                    ],
+                    [
+                        (10, 0.46),
+                        (15, 0.27),
+                        (20, 0.17),
+                        (50, 0.05),
+                        (80, 0.03),
+                        (100, 0.02),
+                    ],
+                    bag1,
+                    bag2,
+                    ss,
+                    num_simulations=500000,  # Adjust this based on desired accuracy/speed
+                ),
+                timeout=CALCULATION_TIMEOUT,
+            )
     except asyncio.TimeoutError:
         embed = discord.Embed(
             title="Calculation Timeout",
@@ -206,9 +307,18 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
         value=f"Average Soulstones Expected: {3.75*bag1+18.95*bag2}",
         inline=False,
     )
+    # Modify the embed description to indicate approximation if applicable
+    result_description = ""
+    if not use_exact_calculation:
+        result_description += (
+            f"(Results are approximate based on 500000 simulations)\n\n"
+        )
+    result_description += (
+        f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%"
+    )
     embed.add_field(
         name="--- Results ---",
-        value=f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%",
+        value=result_description,
         inline=False,
     )
     embed.add_field(
@@ -231,9 +341,12 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
 @bags_prefix.error
 async def bags_prefix_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
-        await ctx.send(
-            f"This command is on cooldown. Please try again after {error.retry_after:.2f} seconds."
+        embed = discord.Embed(
+            title="",
+            description=f"This command is on cooldown. Please try again after {error.retry_after:.2f} seconds.",
+            color=discord.Color.red(),
         )
+        await ctx.send(embed=embed)
     elif isinstance(error, commands.MissingRequiredArgument):
         embed = discord.Embed(
             title="",
@@ -254,7 +367,12 @@ async def bags_prefix_error(ctx, error):
         await ctx.send(embed=embed)
     else:
         # For any other unhandled errors
-        await ctx.send(f"An unexpected error occurred: {error}")
+        embed = discord.Embed(
+            title="",
+            description=f"An unexpected error occurred: {error}",
+            color=discord.Color.red(),
+        )
+        await ctx.send(embed=embed)
 
 
 @bot.tree.command(
@@ -285,10 +403,45 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
+    # Determine if exact calculation or simulation is needed
+    use_exact_calculation = (
+        bag1 <= EXACT_CALC_THRESHOLD_BOX1 and bag2 <= EXACT_CALC_THRESHOLD_BOX2
+    )
+
     try:
-        prob_at_least_target, top_sums = await asyncio.wait_for(
-            async_parser(bag1, bag2, ss), timeout=CALCULATION_TIMEOUT
-        )
+        if use_exact_calculation:
+            prob_at_least_target, top_sums = await asyncio.wait_for(
+                async_parser(bag1, bag2, ss), timeout=CALCULATION_TIMEOUT
+            )
+        else:
+            # For simulation, you might want a longer timeout or no timeout for the simulation itself
+            # as it's designed to complete based on num_simulations, not combinatorial size.
+            # But keep the overall timeout for the bot's response.
+            prob_at_least_target, top_sums = await asyncio.wait_for(
+                run_monte_carlo_simulation(
+                    [
+                        (1, 0.36),
+                        (2, 0.37),
+                        (5, 0.15),
+                        (10, 0.07),
+                        (20, 0.03),
+                        (30, 0.02),
+                    ],
+                    [
+                        (10, 0.46),
+                        (15, 0.27),
+                        (20, 0.17),
+                        (50, 0.05),
+                        (80, 0.03),
+                        (100, 0.02),
+                    ],
+                    bag1,
+                    bag2,
+                    ss,
+                    num_simulations=500000,  # Adjust this based on desired accuracy/speed
+                ),
+                timeout=CALCULATION_TIMEOUT,
+            )
     except asyncio.TimeoutError:
         embed = discord.Embed(
             title="Calculation Timeout",
@@ -331,9 +484,18 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
         value=f"Average Soulstones Expected: {3.75*bag1+18.95*bag2}",
         inline=False,
     )
+    # Modify the embed description to indicate approximation if applicable
+    result_description = ""
+    if not use_exact_calculation:
+        result_description += (
+            f"(Results are approximate based on 500000 simulations)\n\n"
+        )
+    result_description += (
+        f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%"
+    )
     embed.add_field(
         name="--- Results ---",
-        value=f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%",
+        value=result_description,
         inline=False,
     )
     embed.add_field(
@@ -358,15 +520,23 @@ async def bags_slash_error(
     interaction: discord.Interaction, error: app_commands.AppCommandError
 ):
     if isinstance(error, app_commands.CommandOnCooldown):
+        embed = discord.Embed(
+            title="",
+            description=f"This command is on cooldown. Please try again after {error.retry_after:.2f} seconds.",
+            color=discord.Color.red(),
+        )
         await interaction.response.send_message(
-            f"This command is on cooldown. Please try again after {error.retry_after:.2f} seconds.",
+            embed=embed,
             ephemeral=True,
         )
     else:
         # Handle other potential errors for slash commands if needed
-        await interaction.response.send_message(
-            f"An unexpected error occurred: {error}", ephemeral=True
+        embed = discord.Embed(
+            title="",
+            description=f"An unexpected error occurred: {error}",
+            color=discord.Color.red(),
         )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.event
