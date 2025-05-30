@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 import collections
 import random
 from collections import Counter
-import math
-import numpy as np  # ADD THIS IMPORT
+import math  # For math.sqrt
+import numpy as np  # Added for potential future use or if simulate_single_bag_draws was used elsewhere efficiently
 
 # You might need to install scipy for the normal approximation tier:
 # pip install scipy
@@ -41,13 +41,9 @@ CALCULATION_TIMEOUT = 15  # seconds - Adjusted slightly based on your observatio
 EXACT_CALC_THRESHOLD_BOX1 = 20  # Max draws for Box 1 using exact method
 EXACT_CALC_THRESHOLD_BOX2 = 20  # Max draws for Box 2 using exact method
 
-MONTE_CARLO_SIMULATIONS_DEFAULT = 1_000_000  # Number of simulations for Monte Carlo
-
-# This threshold is where Monte Carlo might become too slow,
-# and Normal Approximation is better.
-# For 40,40, this might be around 25-30, let's test.
-MONTE_CARLO_THRESHOLD_BOX1 = 25  # Max draws for Box 1 using Monte Carlo
-MONTE_CARLO_THRESHOLD_BOX2 = 25  # Max draws for Box 2 using Monte Carlo
+# MONTE_CARLO_SIMULATIONS_DEFAULT = 1_000_000 # No longer used in main path
+# MONTE_CARLO_THRESHOLD_BOX1 = 25 # No longer used
+# MONTE_CARLO_THRESHOLD_BOX2 = 25 # No longer used
 
 
 # Define a custom cooldown mapping for prefix commands
@@ -99,9 +95,9 @@ async def run_exact_calculation(box1_def, box2_def, draws_box1, draws_box2, targ
     return (prob_at_least_target * 100, top_3_sums_with_probs)
 
 
-# --- Monte Carlo Simulation Logic ---
+# --- Monte Carlo Simulation Logic (No longer called by async_parser, but kept for reference) ---
 # Optimized simulate_single_bag_draws using NumPy
-async def simulate_single_bag_draws(box_def, num_draws):
+def simulate_single_bag_draws(box_def, num_draws):  # Changed to sync function
     """Simulates drawing `num_draws` times from a single `box_def` using NumPy."""
     if not box_def or num_draws == 0:  # Handle empty box_def or zero draws
         return 0
@@ -119,12 +115,12 @@ async def simulate_single_bag_draws(box_def, num_draws):
     return int(total_sum)  # Ensure integer return
 
 
-async def run_monte_carlo_simulation(
+async def run_monte_carlo_simulation(  # This function is no longer called by async_parser
     box1_def, box2_def, draws_box1, draws_box2, target_sum, num_simulations
 ):
     """
     Runs a Monte Carlo simulation for combined bag draws.
-    Corrected logic: simulate the *total* outcome `num_simulations` times.
+    (Note: This function is currently not called by async_parser)
     """
     successful_outcomes = 0
     combined_sums_for_stats = []
@@ -139,26 +135,21 @@ async def run_monte_carlo_simulation(
     probabilities2 /= probabilities2.sum()  # Normalize
 
     # Determine a batch size for yielding control
-    # This allows more frequent yielding if simulations are very fast per iteration
     batch_size = max(
         1, num_simulations // 1000
     )  # Yield at least 1000 times over total simulations
 
     for i in range(num_simulations):
-        if i % batch_size == 0:  # Yield control periodically
-            await asyncio.sleep(0)
+        if i % batch_size == 0:
+            await asyncio.sleep(0)  # Keep yielding if this function *were* to be called
 
-        # Use the optimized (NumPy-based) simulate_single_bag_draws
-        # Note: If simulate_single_bag_draws was also async, you'd await it.
-        # But since we're using numpy, it's efficient enough to call sync here.
-        sum1 = simulate_single_bag_draws(
-            box1_def, draws_box1
-        )  # Not awaiting because it now uses numpy, no internal awaits
-        sum2 = simulate_single_bag_draws(
-            box2_def, draws_box2
-        )  # Not awaiting because it now uses numpy, no internal awaits
+        # Now calling simulate_single_bag_draws as a synchronous numpy-based function
+        sum1 = simulate_single_bag_draws(box1_def, draws_box1)
+        sum2 = simulate_single_bag_draws(box2_def, draws_box2)
 
-        total_sum = await sum1 + await sum2  # AWAIT THE AWAITABLE RESULTS
+        total_sum = (
+            sum1 + sum2
+        )  # No await needed here anymore if simulate_single_bag_draws is sync
         combined_sums_for_stats.append(total_sum)
 
         if total_sum >= target_sum:
@@ -238,39 +229,26 @@ async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
         )
         method = "exact"
     elif (
-        num_draws_box1 <= MONTE_CARLO_THRESHOLD_BOX1
-        and num_draws_box2 <= MONTE_CARLO_THRESHOLD_BOX2
-    ) or not SCIPY_AVAILABLE:
-        result_data = await run_monte_carlo_simulation(  # Await this one
-            box1_definition,
-            box2_definition,
-            num_draws_box1,
-            num_draws_box2,
-            target_sum_value,
-            num_simulations=MONTE_CARLO_SIMULATIONS_DEFAULT,
-        )
-        method = "monte_carlo"
-    elif SCIPY_AVAILABLE:
-        result_data = run_normal_approximation(  # <<< FIX: REMOVED `await` HERE
-            box1_definition,
-            box2_definition,
-            num_draws_box1,
-            num_draws_box2,
-            target_sum_value,
+        SCIPY_AVAILABLE
+    ):  # If exact is not feasible, and SciPy is available, use Normal Approximation
+        result_data = (
+            run_normal_approximation(  # NO AWAIT needed as it's a sync function
+                box1_definition,
+                box2_definition,
+                num_draws_box1,
+                num_draws_box2,
+                target_sum_value,
+            )
         )
         method = "normal_approx"
     else:
-        # Fallback if for some reason none of the above hit and scipy isn't there
-        # This should be covered by the `not SCIPY_AVAILABLE` above, but as a safeguard.
-        result_data = await run_monte_carlo_simulation(
-            box1_definition,
-            box2_definition,
-            num_draws_box1,
-            num_draws_box2,
-            target_sum_value,
-            num_simulations=MONTE_CARLO_SIMULATIONS_DEFAULT // 10,
+        # This branch is hit if:
+        # 1. Inputs exceed EXACT_CALC_THRESHOLDs
+        # 2. SCIPY_AVAILABLE is False
+        # As Monte Carlo caused timeouts, we raise an error here.
+        raise ValueError(
+            "Cannot calculate for these inputs. SciPy library is not available for approximation."
         )
-        method = "monte_carlo_fallback"
 
     return result_data, method
 
@@ -310,12 +288,12 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
     calculation_method_display = "Calculating..."
     if bag1 <= EXACT_CALC_THRESHOLD_BOX1 and bag2 <= EXACT_CALC_THRESHOLD_BOX2:
         calculation_method_display = "Calculating (exact method)..."
-    elif (
-        bag1 <= MONTE_CARLO_THRESHOLD_BOX1 and bag2 <= MONTE_CARLO_THRESHOLD_BOX2
-    ) or not SCIPY_AVAILABLE:
-        calculation_method_display = "Calculating (Monte Carlo simulation)..."
     elif SCIPY_AVAILABLE:
         calculation_method_display = "Calculating (Normal Approximation)..."
+    else:  # Fallback message if SciPy is not available for large inputs
+        calculation_method_display = (
+            "Inputs too large; approximation not available. Calculation may fail."
+        )
 
     initial_message = await ctx.send(
         f"{calculation_method_display} This might take a moment."
@@ -331,6 +309,15 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
             title="Calculation Timeout",
             description=f"The calculation took too long (>{CALCULATION_TIMEOUT} seconds) and was cancelled. Please try with smaller bag numbers or be aware that very large inputs may take a long time to compute even with approximations.",
             color=discord.Color.orange(),
+        )
+        await initial_message.edit(content=None, embed=embed)
+        return
+    except ValueError as e:  # Catch the specific ValueError from async_parser
+        bucket.reset()
+        embed = discord.Embed(
+            title="Calculation Error",
+            description=f"Input error: {e}",
+            color=discord.Color.red(),
         )
         await initial_message.edit(content=None, embed=embed)
         return
@@ -366,9 +353,7 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
     results_value = (
         f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%"
     )
-    if method_used == "monte_carlo":
-        results_value += f"\n*(Result is an approximation based on {MONTE_CARLO_SIMULATIONS_DEFAULT} simulations)*"
-    elif method_used == "normal_approx":
+    if method_used == "normal_approx":  # Only check for normal_approx
         results_value += "\n*(Result is an approximation based on Normal Distribution)*"
     results_value += f"\n*Calculation Method: {method_used.replace('_', ' ').title()}*"
 
@@ -378,7 +363,7 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
         inline=False,
     )
 
-    # Conditionally add the "Top 3 sums" field
+    # Conditionally add the "Top 3 sums" field (only for exact method)
     if method_used == "exact":
         top_sums_text = ""
         # Ensure there are enough elements in top_sums before accessing them
@@ -396,7 +381,6 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
             value=top_sums_text.strip(),
             inline=False,
         )
-    # If not "exact", this field is simply not added to the embed.
 
     embed.add_field(
         name="",
@@ -462,12 +446,12 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
     calculation_method_display = "Calculating..."
     if bag1 <= EXACT_CALC_THRESHOLD_BOX1 and bag2 <= EXACT_CALC_THRESHOLD_BOX2:
         calculation_method_display = "Calculating (exact method)..."
-    elif (
-        bag1 <= MONTE_CARLO_THRESHOLD_BOX1 and bag2 <= MONTE_CARLO_THRESHOLD_BOX2
-    ) or not SCIPY_AVAILABLE:
-        calculation_method_display = "Calculating (Monte Carlo simulation)..."
     elif SCIPY_AVAILABLE:
         calculation_method_display = "Calculating (Normal Approximation)..."
+    else:  # Fallback message if SciPy is not available for large inputs
+        calculation_method_display = (
+            "Inputs too large; approximation not available. Calculation may fail."
+        )
 
     await interaction.followup.send(f"{calculation_method_display}", ephemeral=True)
 
@@ -480,6 +464,14 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
             title="Calculation Timeout",
             description=f"The calculation took too long (>{CALCULATION_TIMEOUT} seconds) and was cancelled. Please try with smaller bag numbers or be aware that very large inputs may take a long time to compute even with approximations.",
             color=discord.Color.orange(),
+        )
+        await interaction.followup.send(embed=embed)
+        return
+    except ValueError as e:  # Catch the specific ValueError from async_parser
+        embed = discord.Embed(
+            title="Calculation Error",
+            description=f"Input error: {e}",
+            color=discord.Color.red(),
         )
         await interaction.followup.send(embed=embed)
         return
@@ -511,9 +503,7 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
     results_value = (
         f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%"
     )
-    if method_used == "monte_carlo":
-        results_value += f"\n*(Result is an approximation based on {MONTE_CARLO_SIMULATIONS_DEFAULT} simulations)*"
-    elif method_used == "normal_approx":
+    if method_used == "normal_approx":  # Only check for normal_approx
         results_value += "\n*(Result is an approximation based on Normal Distribution)*"
     results_value += f"\n*Calculation Method: {method_used.replace('_', ' ').title()}*"
 
@@ -523,7 +513,7 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
         inline=False,
     )
 
-    # Conditionally add the "Top 3 sums" field
+    # Conditionally add the "Top 3 sums" field (only for exact method)
     if method_used == "exact":
         top_sums_text = ""
         padded_top_sums = top_sums + [(0, 0.0)] * (3 - len(top_sums))
@@ -540,7 +530,6 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
             value=top_sums_text.strip(),
             inline=False,
         )
-    # If not "exact", this field is simply not added to the embed.
 
     embed.add_field(
         name="",
