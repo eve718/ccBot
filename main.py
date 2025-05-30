@@ -130,6 +130,9 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
     Calculates soulstone probabilities for prefix command !bags.
     """
     if bag1 < 0 or bag2 < 0 or ss < 0:
+        # If input is invalid, reset the cooldown for this user.
+        # This is the key change to prevent cooldowns on bad input.
+        bags_prefix.reset_cooldown(ctx)
         embed = discord.Embed(
             title="",
             description="Wrong input. Numbers of bags and soulstones goal must be non-negative.",
@@ -224,8 +227,8 @@ async def bags_prefix_error(ctx, error):
             color=discord.Color.red(),
         )
         embed.add_field(
-            name="!bags [number of bags I], [number of bags II], [soulstones goal]",
-            value="",
+            name="!bags [number of bags I] [number of bags II] [soulstones goal]",
+            value="Example: !bags 10 5 200",
         )
         await ctx.send(embed=embed)
     elif isinstance(error, commands.BadArgument):
@@ -233,10 +236,6 @@ async def bags_prefix_error(ctx, error):
             title="",
             description="Wrong input. Please ensure bag numbers and soulstone goal are valid integers.",
             color=discord.Color.red(),
-        )
-        embed.add_field(
-            name="!bags [number of bags I], [number of bags II], [soulstones goal]",
-            value="",
         )
         await ctx.send(embed=embed)
     else:
@@ -260,6 +259,9 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
     """
     Calculates soulstone probabilities for slash command /bags.
     """
+
+    await interaction.response.defer(thinking=True)  # Defer the response immediately
+
     if bag1 < 0 or bag2 < 0 or ss < 0:
         embed = discord.Embed(
             title="",
@@ -268,8 +270,6 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
-
-    await interaction.response.defer(thinking=True)  # Defer the response immediately
 
     try:
         prob_at_least_target, top_sums = await asyncio.wait_for(
@@ -368,12 +368,12 @@ async def on_guild_join(guild):
         inline=False,
     )
     embed.add_field(
-        name=" 1. !bags [number of bags I], [number of bags II], [soulstones goal]",
+        name=" 1. !bags [number of bags I] [number of bags II] [soulstones goal]",
         value="This will calc the chance to obtain at least [soulstones goal] soulstones from [number of bags I] bags I plus [number of bags II] bags II",
         inline=False,
     )
     embed.add_field(
-        name=" 2. /bags [bag1], [bag2], [ss]",
+        name=" 2. /bags bag1:[bag1] bag2:[bag2] ss:[ss]",
         value="This will calc the chance to obtain at least [ss] soulstones from [bag1] bags I plus [bag2] bags II",
         inline=False,
     )
