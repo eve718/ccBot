@@ -158,15 +158,79 @@ async def on_message(message):
                 await message.channel.send(embed=embed)
                 return
 
-        prob_at_least_target, top_sums = parser(info[0], info[1], info[2])
+        try:
+            prob_at_least_target, top_sums = await asyncio.wait_for(
+                parser(info[0], info[1], info[2]), timeout=10
+            )
 
+            if not top_sums:
+                embed = discord.Embed(
+                    title="",
+                    description="Something went wrong",
+                    color=discord.Color.red(),
+                )
+                await message.channel.send(embed=embed)
+                return
+
+            embed = discord.Embed(
+                title="",
+                description="",
+                color=discord.Color.red(),
+            )
+            embed.add_field(
+                name="--- Parameters ---",
+                value=f"Bag I Draws: {info[0]}\nBag II Draws: {info[1]}\nTarget Soulstones (at least): {info[2]}",
+                inline=False,
+            )
+            embed.add_field(
+                name="--- Pre-results ---",
+                value=f"Average Soulstones Expected: {3.75*info[0]+18.95*info[1]}",
+                inline=False,
+            )
+            embed.add_field(
+                name="--- Results ---",
+                value=f"Probability of Soulstones being at least {info[2]}: {prob_at_least_target:.4f}%",
+                inline=False,
+            )
+            embed.add_field(
+                name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
+                value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]*100:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]*100:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]*100:.4f}%",
+                inline=False,
+            )
+            embed.add_field(
+                name="",
+                value=f"Bot made by <@{OWNER}>",
+                inline=False,
+            )
+            await message.channel.send(embed=embed)
+        except asyncio.TimeoutError:
+            embed = discord.Embed(
+                title="",
+                description="Request timed out",
+                color=discord.Color.red(),
+            )
+            await message.channel.send(embed=embed)
+
+
+@bot.tree.command(
+    name="bags",
+    description=f"Will calc the chance to obtain at least [ss] soulstones from [bag1] bags I plus [bag2] bags II",
+)
+async def chance(interaction: discord.Interaction, bag1: int, bag2: int, ss: int):
+    await interaction.response.defer(thinking=True)
+    await interaction.followup.send("Calculating...")
+
+    try:
+        prob_at_least_target, top_sums = await asyncio.wait_for(
+            parser(bag1, bag2, ss), timeout=10
+        )
         if not top_sums:
             embed = discord.Embed(
                 title="",
                 description="Something went wrong",
                 color=discord.Color.red(),
             )
-            await message.channel.send(embed=embed)
+            await interaction.response.send_message(embed=embed)
             return
 
         embed = discord.Embed(
@@ -176,22 +240,22 @@ async def on_message(message):
         )
         embed.add_field(
             name="--- Parameters ---",
-            value=f"Bag I Draws: {info[0]}\nBag II Draws: {info[1]}\nTarget Soulstones (at least): {info[2]}",
+            value=f"Bag I Draws: {bag1}\nBag II Draws: {bag2}\nTarget Soulstones (at least): {ss}",
             inline=False,
         )
         embed.add_field(
             name="--- Pre-results ---",
-            value=f"Average Soulstones Expected: {3.75*info[0]+18.95*info[1]}",
+            value=f"Average Soulstones Expected: {3.75*bag1+18.95*bag2}",
             inline=False,
         )
         embed.add_field(
             name="--- Results ---",
-            value=f"Probability of Soulstones being at least {info[2]}: {prob_at_least_target:.4f}%",
+            value=f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%",
             inline=False,
         )
         embed.add_field(
             name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
-            value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]*100:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]*100:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]*100:.4f}%",
+            value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]*100:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]*100:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]*1000:.4f}%",
             inline=False,
         )
         embed.add_field(
@@ -199,58 +263,15 @@ async def on_message(message):
             value=f"Bot made by <@{OWNER}>",
             inline=False,
         )
-        await message.channel.send(embed=embed)
-
-
-@bot.tree.command(
-    name="bags",
-    description=f"Will calc the chance to obtain at least [ss] soulstones from [bag1] bags I plus [bag2] bags II",
-)
-async def chance(interaction: discord.Interaction, bag1: int, bag2: int, ss: int):
-    await interaction.response.defer()
-
-    prob_at_least_target, top_sums = parser(bag1, bag2, ss)
-    if not top_sums:
+        await asyncio.sleep(delay=0)
+        await interaction.followup.send(embed=embed)
+    except asyncio.TimeoutError:
         embed = discord.Embed(
             title="",
-            description="Something went wrong",
+            description="Request timed out",
             color=discord.Color.red(),
         )
         await interaction.response.send_message(embed=embed)
-        return
-
-    embed = discord.Embed(
-        title="",
-        description="",
-        color=discord.Color.red(),
-    )
-    embed.add_field(
-        name="--- Parameters ---",
-        value=f"Bag I Draws: {bag1}\nBag II Draws: {bag2}\nTarget Soulstones (at least): {ss}",
-        inline=False,
-    )
-    embed.add_field(
-        name="--- Pre-results ---",
-        value=f"Average Soulstones Expected: {3.75*bag1+18.95*bag2}",
-        inline=False,
-    )
-    embed.add_field(
-        name="--- Results ---",
-        value=f"Probability of Soulstones being at least {ss}: {prob_at_least_target:.4f}%",
-        inline=False,
-    )
-    embed.add_field(
-        name="--- Three Most Likely Total Soulstones Count and Their Chances ---",
-        value=f" 1. Total Soulstones: {top_sums[0][0]}, Chance: {top_sums[0][1]*100:.4f}%\n 2. Total Soulstones: {top_sums[1][0]}, Chance: {top_sums[1][1]*100:.4f}%\n 3. Total Soulstones: {top_sums[2][0]}, Chance: {top_sums[2][1]*1000:.4f}%",
-        inline=False,
-    )
-    embed.add_field(
-        name="",
-        value=f"Bot made by <@{OWNER}>",
-        inline=False,
-    )
-    await asyncio.sleep(delay=0)
-    await interaction.followup.send(embed=embed)
 
 
 @bot.event
