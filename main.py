@@ -11,6 +11,8 @@ import math
 import numpy as np
 import logging
 
+print(f"DEBUG: discord.py version detected: {discord.__version__}") # ADD THIS LINE HERE
+
 try:
     from scipy.stats import norm
 
@@ -974,5 +976,6 @@ async def shutdown_slash(interaction: discord.Interaction):
     )
     await bot.close()
 
+print("DEBUG: Reached bot.run(TOKEN) call.") # ADD THIS LINE HERE, just before bot.run
 
 bot.run(TOKEN)
