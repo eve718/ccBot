@@ -358,40 +358,54 @@ async def on_app_command_error(
         logger.info(
             f"User {interaction.user.id} hit cooldown for slash command '{interaction.command.name}'."
         )
-    elif isinstance(error, app_commands.MissingRequiredArgument):
-        embed = discord.Embed(
-            title="❌ Missing Arguments",
-            description=f"You're missing a required argument for this command: `{error.param.name}`.",
-            color=discord.Color.red(),
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    elif isinstance(error, commands.MissingRequiredArgument):
         logger.warning(
-            f"Missing argument for slash command '{interaction.command.name}' from {interaction.user.id}: {error.param.name}"
+            f"Missing argument for slash command: {error.param.name} in command {interaction.command.name} by {interaction.user.id}."
         )
-    elif isinstance(error, app_commands.BadArgument):
         embed = discord.Embed(
-            title="❌ Invalid Input Type",
-            description=f"One of your inputs is invalid. Please check the argument types (e.g., ensure numbers are integers).",
+            title="❌ Missing Argument",
+            description=f"You're missing a required argument: `{error.param.display_name or error.param.name}`.",
             color=discord.Color.red(),
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        logger.warning(
-            f"Bad argument for slash command '{interaction.command.name}' from {interaction.user.id}: {error}"
-        )
-    else:
-        embed = discord.Embed(
-            title="⚠️ Unexpected Error",
-            description=f"An unexpected error occurred: `{error}`. Please try again later.",
-            color=discord.Color.red(),
-        )
-        # Check if response was already sent
+        embed.set_footer(text="Please provide all necessary arguments.")
         if interaction.response.is_done():
             await interaction.followup.send(embed=embed, ephemeral=True)
         else:
             await interaction.response.send_message(embed=embed, ephemeral=True)
-        logger.exception(
-            f"Unhandled error in slash command '{interaction.command.name}' by {interaction.user.id}."
+    elif isinstance(error, app_commands.CommandInvokeError):
+        original_error = error.original
+        logger.error(
+            f"Command '{interaction.command.name}' raised an exception: {original_error}",
+            exc_info=True,
         )
+        error_message = (
+            f"An unexpected error occurred: `{original_error}`. "
+            "The developer has been notified."
+        )
+        embed = discord.Embed(
+            title="💥 Error Executing Command",
+            description=error_message,
+            color=discord.Color.dark_red(),
+        )
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        logger.error(f"Unhandled application command error: {error}", exc_info=True)
+        error_message = (
+            f"An unhandled error occurred: `{error}`. "
+            "The developer has been notified."
+        )
+        embed = discord.Embed(
+            title="🐛 Unhandled Error",
+            description=error_message,
+            color=discord.Color.red(),
+        )
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # --- Embed Generation Function to ensure identical embeds ---
@@ -861,7 +875,7 @@ async def ping_slash(interaction: discord.Interaction):
         description=f"Latency: `{latency_ms:.2f}ms`",
         color=discord.Color.blue(),
     )
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
     logger.info(f"Sent ping response to {interaction.user.id}.")
 
 
@@ -888,6 +902,9 @@ async def info_prefix(ctx):
     if bot_online_since:
         try:
             online_time_formatted = discord.utils.format_dt(bot_online_since, "R")
+            logger.info(
+                f"Formatted online time string for footer: {online_time_formatted}"
+            )
         except Exception as e:
             logger.error(f"Error formatting bot_online_since: {e}")
             online_time_formatted = "Error formatting time"
@@ -926,6 +943,9 @@ async def info_slash(interaction: discord.Interaction):
     if bot_online_since:
         try:
             online_time_formatted = discord.utils.format_dt(bot_online_since, "R")
+            logger.info(
+                f"Formatted online time string for footer: {online_time_formatted}"
+            )
         except Exception as e:
             logger.error(f"Error formatting bot_online_since: {e}")
             online_time_formatted = "Error formatting time"
@@ -933,7 +953,7 @@ async def info_slash(interaction: discord.Interaction):
         f"bot_online_since type: {type(bot_online_since)}, value: {bot_online_since}"
     )
     embed.set_footer(text=f"Bot Version: 1.0.0 | Online since: {online_time_formatted}")
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
     logger.info(f"Sent info response to {interaction.user.id}.")
 
 
@@ -1035,7 +1055,7 @@ async def baginfo_slash(interaction: discord.Interaction):
     )
 
     embed.set_footer(text=f"Information provided by {bot.user.name}")
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(embed=embed)
     logger.info(f"Sent baginfo response to {interaction.user.id}.")
 
 
@@ -1055,7 +1075,7 @@ async def menu_slash(interaction: discord.Interaction):
     )
     menu_embed = await create_menu_embed()
     view = CommandMenuView(bot)
-    await interaction.response.send_message(embed=menu_embed, view=view)
+    await interaction.followup.send(embed=menu_embed, view=view)
     logger.info(f"Sent menu response to {interaction.user.id}.")
 
 
@@ -1080,9 +1100,7 @@ async def sync_prefix(ctx):
 @commands.is_owner()
 async def sync_slash(interaction: discord.Interaction):
     logger.info(f"Owner {interaction.user.id} called 'sync' slash command.")
-    await interaction.response.send_message(
-        "Syncing slash commands globally. This may take a moment...", ephemeral=True
-    )
+    await interaction.response.defer(ephemeral=True)  # Defer immediately
     try:
         await bot.tree.sync()
         await interaction.followup.send(
