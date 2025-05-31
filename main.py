@@ -869,6 +869,7 @@ async def ping_slash(interaction: discord.Interaction):
     logger.info(
         f"Slash command 'ping' called by {interaction.user} ({interaction.user.id})."
     )
+    await interaction.response.defer(ephemeral=False, thinking=True)
     latency_ms = bot.latency * 1000
     embed = discord.Embed(
         title="🏓 Pong!",
@@ -923,6 +924,7 @@ async def info_slash(interaction: discord.Interaction):
     logger.info(
         f"Slash command 'info' called by {interaction.user} ({interaction.user.id})."
     )
+    await interaction.response.defer(ephemeral=False, thinking=True)
     embed = discord.Embed(
         title="ℹ️ Bot Information",
         description="I am a Discord bot designed to calculate soulstone probabilities for Castle Clash bag draws.",
@@ -1015,6 +1017,7 @@ async def baginfo_slash(interaction: discord.Interaction):
     logger.info(
         f"Slash command 'baginfo' called by {interaction.user} ({interaction.user.id})."
     )
+    await interaction.response.defer(ephemeral=False, thinking=True)
     bag1_exp, bag1_var = get_bag_stats(BAG_I_DEFINITION)
     bag2_exp, bag2_var = get_bag_stats(BAG_II_DEFINITION)
 
@@ -1073,6 +1076,7 @@ async def menu_slash(interaction: discord.Interaction):
     logger.info(
         f"Slash command 'menu' called by {interaction.user} ({interaction.user.id})."
     )
+    await interaction.response.defer(ephemeral=False, thinking=True)
     menu_embed = await create_menu_embed()
     view = CommandMenuView(bot)
     await interaction.followup.send(embed=menu_embed, view=view)
