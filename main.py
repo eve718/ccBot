@@ -658,8 +658,7 @@ class CommandMenuView(discord.ui.View):
     ):
         try:
             # Always defer the interaction as the very first step in the try block
-            if not interaction.response.is_done():
-                await interaction.response.defer(ephemeral=False, thinking=True)
+            await interaction.response.defer(ephemeral=False, thinking=True)
 
             command_name = button.custom_id.replace("menu_button_", "")
             logger.info(f"User {interaction.user.id} clicked '{command_name}' button.")
@@ -698,6 +697,16 @@ class CommandMenuView(discord.ui.View):
                     f"Failed to edit menu embed for '{command_name}': self.message was not set."
                 )
                 await interaction.followup.send(embed=content_embed, ephemeral=True)
+
+            #    Since self.message.edit() already updated the main message, we just need to tell
+            #    Discord that the *deferred button interaction* is complete.
+            #    Sending a very short-lived ephemeral followup message is a common way to do this.
+            await interaction.followup.send(
+                "...", ephemeral=True, delete_after=0.1
+            )  # Sends a tiny, invisible message that immediately disappears
+            logger.info(
+                f"Dismissed 'Bot is thinking...' for '{command_name}' button click."
+            )
 
         except Exception as e:
             logger.error(
