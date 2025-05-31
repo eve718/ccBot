@@ -529,7 +529,7 @@ class CommandMenuView(discord.ui.View):
         cmd_details = COMMAND_MENU.get(command_name)
 
         if not cmd_details:
-            await interaction.followup.send("Unknown command.", ephemeral=True)
+            await interaction.response.send_message("Unknown command.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=False, thinking=True)
@@ -557,7 +557,9 @@ class CommandMenuView(discord.ui.View):
                     # a Context (for prefix commands) or a specific interaction (for slash)
                     # Currently, your ping, info, baginfo slash commands are designed to take 'interaction'
                     # so this should work.
-                    await command_func(interaction)  # Directly pass the interaction
+                    await command_func.callback(
+                        interaction
+                    )  # Directly pass the interaction
                     logger.info(
                         f"User {interaction.user.id} clicked '{command_name}' button, executed command."
                     )
@@ -881,9 +883,18 @@ async def info_prefix(ctx):
         value="[GitHub](https://github.com/eve718/ccBot)",
         inline=False,
     )
-    embed.set_footer(
-        text=f"Bot Version: 1.0.0 | Online since: {discord.utils.format_dt(bot_online_since, 'R')}"
+    # Pre-format the online_since time
+    online_time_formatted = "Unknown"
+    if bot_online_since:
+        try:
+            online_time_formatted = discord.utils.format_dt(bot_online_since, "R")
+        except Exception as e:
+            logger.error(f"Error formatting bot_online_since: {e}")
+            online_time_formatted = "Error formatting time"
+    logger.info(
+        f"bot_online_since type: {type(bot_online_since)}, value: {bot_online_since}"
     )
+    embed.set_footer(text=f"Bot Version: 1.0.0 | Online since: {online_time_formatted}")
     await ctx.send(embed=embed)
     logger.info(f"Sent info response to {ctx.author.id}.")
 
@@ -910,9 +921,18 @@ async def info_slash(interaction: discord.Interaction):
         value="[GitHub](https://github.com/eve718/ccBot)",
         inline=False,
     )
-    embed.set_footer(
-        text=f"Bot Version: 1.0.0 | Online since: {discord.utils.format_dt(bot_online_since, 'R')}"
+    # Pre-format the online_since time
+    online_time_formatted = "Unknown"
+    if bot_online_since:
+        try:
+            online_time_formatted = discord.utils.format_dt(bot_online_since, "R")
+        except Exception as e:
+            logger.error(f"Error formatting bot_online_since: {e}")
+            online_time_formatted = "Error formatting time"
+    logger.info(
+        f"bot_online_since type: {type(bot_online_since)}, value: {bot_online_since}"
     )
+    embed.set_footer(text=f"Bot Version: 1.0.0 | Online since: {online_time_formatted}")
     await interaction.response.send_message(embed=embed)
     logger.info(f"Sent info response to {interaction.user.id}.")
 
