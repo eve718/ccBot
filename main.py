@@ -605,41 +605,41 @@ class CommandMenuView(discord.ui.View):
     def __init__(self, bot_instance: commands.Bot, timeout=300):
         super().__init__(timeout=timeout)
         self.bot_instance = bot_instance
-        self.message = None  # Initialize message to None for later assignment
-        # Define your buttons here, matching your command names
-        # You'll need to map command names to button labels and IDs.
-        # Ensure 'bags' button custom_id is 'bags_button_bags' as before
-        # and other commands like 'info', 'ping', 'baginfo' have suitable IDs.
+        self.message = None  # IMPORTANT: Initialize message to None
 
-        # Example buttons (adjust custom_id and label as per your setup)
-        self.add_item(
-            discord.ui.Button(
-                label="Info",
-                custom_id="menu_button_info",
-                style=discord.ButtonStyle.primary,
-            )
+        # Add your desired buttons here.
+        # Assign self.on_command_button_click as the callback for EACH button
+        info_button = discord.ui.Button(
+            label="Info",
+            custom_id="menu_button_info",
+            style=discord.ButtonStyle.primary,
         )
-        self.add_item(
-            discord.ui.Button(
-                label="Bag Info",
-                custom_id="menu_button_baginfo",
-                style=discord.ButtonStyle.primary,
-            )
+        info_button.callback = self.on_command_button_click  # Assign callback
+        self.add_item(info_button)
+
+        baginfo_button = discord.ui.Button(
+            label="Bag Info",
+            custom_id="menu_button_baginfo",
+            style=discord.ButtonStyle.primary,
         )
-        self.add_item(
-            discord.ui.Button(
-                label="Bags (Input Args)",
-                custom_id="menu_button_bags",
-                style=discord.ButtonStyle.secondary,
-            )
+        baginfo_button.callback = self.on_command_button_click  # Assign callback
+        self.add_item(baginfo_button)
+
+        bags_button = discord.ui.Button(
+            label="Bags (Input Args)",
+            custom_id="menu_button_bags",
+            style=discord.ButtonStyle.secondary,
         )
-        self.add_item(
-            discord.ui.Button(
-                label="Ping",
-                custom_id="menu_button_ping",
-                style=discord.ButtonStyle.primary,
-            )
+        bags_button.callback = self.on_command_button_click  # Assign callback
+        self.add_item(bags_button)
+
+        ping_button = discord.ui.Button(
+            label="Ping",
+            custom_id="menu_button_ping",
+            style=discord.ButtonStyle.primary,
         )
+        ping_button.callback = self.on_command_button_click  # Assign callback
+        self.add_item(ping_button)
 
     async def on_timeout(self):
         # Disable all buttons when the view times out
@@ -666,56 +666,66 @@ class CommandMenuView(discord.ui.View):
     async def on_command_button_click(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        # Extract command name from custom_id (e.g., "menu_button_info" -> "info")
-        command_name = button.custom_id.replace("menu_button_", "")
-        logger.info(f"User {interaction.user.id} clicked '{command_name}' button.")
-
-        # Defer the interaction immediately
-        if not interaction.response.is_done():  # Ensure we only defer once
-            await interaction.response.defer(ephemeral=False, thinking=True)
-
-        content_embed = None
-        current_view = self  # Keep the same view (buttons)
-
-        if command_name == "info":
-            content_embed = await create_info_embed(self.bot_instance)
-        elif command_name == "ping":
-            content_embed = await create_ping_embed(self.bot_instance)
-        elif command_name == "baginfo":
-            content_embed = await create_baginfo_embed(self.bot_instance)
-        elif command_name == "bags":
-            # For commands that require arguments, we can't execute them directly from a button
-            # Instead, instruct the user how to use it.
-            content_embed = discord.Embed(
-                title=f"Usage for /{command_name}",
-                description=f"The `/{command_name}` command requires arguments. Please type `/{command_name}` and follow the prompts.",
-                color=discord.Color.yellow(),
-            )
-        else:
-            content_embed = discord.Embed(
-                title="Command Not Found",
-                description="This command is not recognized or not yet implemented in the interactive menu.",
-                color=discord.Color.red(),
-            )
-
-        # Edit the original message to update its content, retaining the buttons
         try:
+            # Always defer the interaction as the very first step in the try block
+            # This acknowledges the interaction within Discord's 3-second timeout.
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=False, thinking=True)
+
+            # Now, safely extract command name and log, knowing interaction is acknowledged.
+            command_name = button.custom_id.replace("menu_button_", "")
+            logger.info(f"User {interaction.user.id} clicked '{command_name}' button.")
+
+            content_embed = None
+            current_view = self  # Keep the same view (buttons)
+
+            if command_name == "info":
+                content_embed = await create_info_embed(self.bot_instance)
+            elif command_name == "ping":
+                content_embed = await create_ping_embed(self.bot_instance)
+            elif command_name == "baginfo":
+                # Ensure bot_instance is passed to create_baginfo_embed
+                content_embed = await create_baginfo_embed(self.bot_instance)
+            elif command_name == "bags":
+                # For commands that require arguments, instruct the user
+                content_embed = discord.Embed(
+                    title=f"Usage for /{command_name}",
+                    description=f"The `/{command_name}` command requires arguments. Please type `/{command_name}` and follow the prompts.",
+                    color=discord.Color.yellow(),
+                )
+            else:
+                content_embed = discord.Embed(
+                    title="Command Not Found",
+                    description="This command is not recognized or not yet implemented in the interactive menu.",
+                    color=discord.Color.red(),
+                )
+
+            # Edit the original message to update its content, retaining the buttons
+            # Use interaction.edit_original_response for deferred interactions
             await interaction.edit_original_response(
                 embed=content_embed, view=current_view
             )
             logger.info(f"Updated menu embed for command '{command_name}'.")
-        except discord.NotFound:
-            logger.warning(
-                f"Failed to edit original response for '{command_name}': Original message not found."
-            )
-        except Exception as e:
-            logger.error(f"Error editing original response for '{command_name}': {e}")
 
-    # You might want to remove this if you only use the decorator above,
-    # or ensure custom_id is set correctly.
-    # @discord.ui.button(...) # This line would be the actual button definition
-    # async def your_button_method(self, interaction: discord.Interaction, button: discord.ui.Button):
-    #    pass # Logic moved to on_command_button_click
+        except Exception as e:
+            # Catch any unexpected errors, log them, and send a user-friendly message
+            logger.error(
+                f"UNCAUGHT ERROR during menu button click (custom_id: {button.custom_id}): {e}",
+                exc_info=True,
+            )
+
+            # Try to send a message to the user if the interaction hasn't been responded to yet
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "An unexpected error occurred while processing your request. The bot owner has been notified.",
+                    ephemeral=True,
+                )
+            else:
+                # If already deferred, use followup to send the error message
+                await interaction.followup.send(
+                    "An unexpected error occurred after starting your request. The bot owner has been notified.",
+                    ephemeral=True,
+                )
 
 
 # --- Embed Generation Function for Menu ---
@@ -1084,7 +1094,9 @@ async def menu_slash(interaction: discord.Interaction):
     initial_embed = await create_welcome_embed()  # Use the new welcome embed helper
     view = CommandMenuView(bot_instance=bot)
 
-    await interaction.followup.send(embed=initial_embed, view=view)
+    # This line is crucial for the view to know which message to edit and timeout
+    message = await interaction.followup.send(embed=initial_embed, view=view)
+    view.message = message
     logger.info(f"Sent menu response to {interaction.user.id}.")
 
 
