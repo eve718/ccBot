@@ -42,10 +42,6 @@ PROB_DIFFERENCE_THRESHOLD = 0.001
 prefix_cooldowns = commands.CooldownMapping.from_cooldown(
     1, 10, commands.BucketType.user
 )
-# Cooldown for slash commands
-slash_cooldowns = app_commands.Cooldown(
-    1, 10.0, key=app_commands.CooldownMapping.default_key
-)
 
 
 # Global variable to store the owner's display name
