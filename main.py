@@ -408,6 +408,112 @@ async def on_app_command_error(
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+async def create_info_embed(bot_instance: commands.Bot):
+    """Creates the embed for the /info command."""
+    embed = discord.Embed(
+        title="ℹ️ Bot Information",
+        description="I am a Discord bot designed to calculate soulstone probabilities for Castle Clash bag draws.",
+        color=discord.Color.blurple(),
+    )
+    if bot_instance.user and bot_instance.user.display_avatar:
+        embed.set_thumbnail(url=bot_instance.user.display_avatar.url)
+
+    embed.add_field(name="Developer", value=OWNER_DISPLAY_NAME, inline=True)
+    embed.add_field(name="Library", value="discord.py", inline=True)
+    embed.add_field(
+        name="Source Code (If Available)",
+        value="[GitHub](https://github.com/your-repo-link)",  # Make sure this is your actual link!
+        inline=False,
+    )
+    online_time_formatted = "Unknown"
+    if bot_online_since:
+        try:
+            online_time_formatted = discord.utils.format_dt(bot_online_since, "R")
+        except Exception as e:
+            logger.error(f"Error formatting bot_online_since: {e}")
+            online_time_formatted = "Error formatting time"
+    # Note: We're keeping the full footer for now, as the test for simplifying it was not applied.
+    embed.set_footer(text=f"Bot Version: 1.0.0 | Online since: {online_time_formatted}")
+    return embed
+
+
+async def create_ping_embed(bot_instance: commands.Bot):
+    """Creates the embed for the /ping command."""
+    latency_ms = round(bot_instance.latency * 1000)
+    embed = discord.Embed(
+        title="🏓 Pong!",
+        description=f"Latency: {latency_ms}ms",
+        color=discord.Color.green(),
+    )
+    return embed
+
+
+async def create_baginfo_embed(
+    bot_instance: commands.Bot,
+):  # Added bot_instance to pass for thumbnail
+    """Creates the embed for the /baginfo command, restoring original content and improving row separation."""
+    bag1_exp, _ = get_bag_stats(BAG_I_DEFINITION)
+    bag2_exp, _ = get_bag_stats(BAG_II_DEFINITION)
+
+    embed = discord.Embed(
+        title="🛍️ Bag Information",
+        description="Details about the soulstone contents, average values, and calculation thresholds for Bag I and Bag II.",
+        color=discord.Color.gold(),
+    )
+    # Re-adding bot thumbnail for consistency with other embed creators
+    if bot_instance.user and bot_instance.user.display_avatar:
+        embed.set_thumbnail(url=bot_instance.user.display_avatar.url)
+
+    # --- Bag I Details ---
+    bag1_contents_text = ""
+    for val, prob in BAG_I_DEFINITION:
+        bag1_contents_text += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
+    embed.add_field(
+        name="Bag I (Box 1) Contents & Averages",
+        value=(
+            f"**Individual Probabilities:**\n{bag1_contents_text}"
+            f"**Average Expected per draw:** `{bag1_exp:.2f}` Soulstones\n"
+            f"**Exact Calculation Threshold:** Up to `{EXACT_CALC_THRESHOLD_BOX1}` draws"
+        ),
+        inline=False,  # Ensures this field takes its own row
+    )
+
+    # --- Bag II Details ---
+    bag2_contents_text = ""
+    for val, prob in BAG_II_DEFINITION:
+        bag2_contents_text += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
+    embed.add_field(
+        name="Bag II (Box 2) Contents & Averages",
+        value=(
+            f"**Individual Probabilities:**\n{bag2_contents_text}"
+            f"**Average Expected per draw:** `{bag2_exp:.2f}` Soulstones\n"
+            f"**Exact Calculation Threshold:** Up to `{EXACT_CALC_THRESHOLD_BOX2}` draws"
+        ),
+        inline=False,  # Ensures this field takes its own row
+    )
+
+    # --- General Accuracy Note (retained from my previous suggestion) ---
+    embed.add_field(
+        name="General Accuracy Note",
+        value="Normal approximation accuracy improves with more draws. For precise results on smaller draws, use values within the exact calculation thresholds.",
+        inline=False,
+    )
+
+    embed.set_footer(text=f"Information provided by Castle Clash")
+    return embed
+
+
+async def create_welcome_embed():
+    """Creates a default welcome/main menu embed."""
+    embed = discord.Embed(
+        title="Welcome to rngBot!",
+        description="Select a command from the menu below to learn more or perform an action.",
+        color=discord.Color.blue(),
+    )
+    # You can add more general info here if you like
+    return embed
+
+
 # --- Embed Generation Function to ensure identical embeds ---
 async def create_bags_embed(
     bag1, bag2, ss, prob_at_least_target, top_sums, method_used, prob_exact_target=None
@@ -492,107 +598,129 @@ async def create_bags_embed(
 
 
 # --- New: Interactive Menu View ---
+# Modify your existing CommandMenuView class:
+
+
 class CommandMenuView(discord.ui.View):
-    def __init__(self, bot_instance):
-        super().__init__(timeout=180)
+    def __init__(self, bot_instance: commands.Bot, timeout=300):
+        super().__init__(timeout=timeout)
         self.bot_instance = bot_instance
-        self.add_commands_to_view()
+        self.message = None  # Initialize message to None for later assignment
+        # Define your buttons here, matching your command names
+        # You'll need to map command names to button labels and IDs.
+        # Ensure 'bags' button custom_id is 'bags_button_bags' as before
+        # and other commands like 'info', 'ping', 'baginfo' have suitable IDs.
 
-    def add_commands_to_view(self):
-        for cmd_name, cmd_details in COMMAND_MENU.items():
-            button_label = cmd_name.capitalize()
-            emoji = cmd_details.get("emoji")
-            has_args = cmd_details.get("has_args", False)
+        # Example buttons (adjust custom_id and label as per your setup)
+        self.add_item(
+            discord.ui.Button(
+                label="Info",
+                custom_id="menu_button_info",
+                style=discord.ButtonStyle.primary,
+            )
+        )
+        self.add_item(
+            discord.ui.Button(
+                label="Bag Info",
+                custom_id="menu_button_baginfo",
+                style=discord.ButtonStyle.primary,
+            )
+        )
+        self.add_item(
+            discord.ui.Button(
+                label="Bags (Input Args)",
+                custom_id="menu_button_bags",
+                style=discord.ButtonStyle.secondary,
+            )
+        )
+        self.add_item(
+            discord.ui.Button(
+                label="Ping",
+                custom_id="menu_button_ping",
+                style=discord.ButtonStyle.primary,
+            )
+        )
 
-            if has_args:
-                button = discord.ui.Button(
-                    label=button_label,
-                    style=discord.ButtonStyle.secondary,
-                    emoji=emoji,
-                    custom_id=f"menu_cmd_{cmd_name}",
-                    disabled=False,
-                )
-                button.callback = self.on_command_button_click
-            else:
-                button = discord.ui.Button(
-                    label=button_label,
-                    style=discord.ButtonStyle.primary,
-                    emoji=emoji,
-                    custom_id=f"menu_cmd_{cmd_name}",
-                )
-                button.callback = self.on_command_button_click
-            self.add_item(button)
-
-    async def on_command_button_click(self, interaction: discord.Interaction):
-        # Safely try to get custom_id
+    async def on_timeout(self):
+        # Disable all buttons when the view times out
+        for item in self.children:
+            item.disabled = True
+        # Edit the original message to reflect the disabled state
         if (
-            interaction.type == discord.InteractionType.component
-            and interaction.data
-            and "custom_id" in interaction.data
-        ):
-            custom_id = interaction.data["custom_id"]
-        else:
-            # Fallback or error handling if custom_id is not found as expected
-            logger.error(f"Interaction data missing custom_id: {interaction}")
-            await interaction.response.send_message(
-                "Failed to process button click: Missing custom ID.", ephemeral=True
-            )
-            return
-
-        command_name = custom_id.replace("menu_cmd_", "")
-        cmd_details = COMMAND_MENU.get(command_name)
-
-        if not cmd_details:
-            await interaction.response.send_message("Unknown command.", ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=False, thinking=True)
-
-        if cmd_details.get("has_args"):
-            usage_slash = cmd_details.get("usage_slash", "N/A")
-            usage_prefix = cmd_details.get("usage_prefix", "N/A")
-            embed = discord.Embed(
-                title=f"💡 How to use: {command_name.capitalize()}",
-                description=f"This command requires arguments. Please use it as follows:",
-                color=discord.Color.blue(),
-            )
-            embed.add_field(name="Slash Command", value=usage_slash, inline=False)
-            embed.add_field(name="Prefix Command", value=usage_prefix, inline=False)
-            await interaction.followup.send(embed=embed, ephemeral=False)
-            logger.info(
-                f"User {interaction.user.id} clicked '{command_name}' button (has args), sent usage info."
-            )
-        else:
-            command_func = self.bot_instance.tree.get_command(command_name)
-            if command_func:
-                try:
-                    # For commands without arguments, directly invoke them as app commands
-                    # You might need to adjust how these commands are designed if they expect
-                    # a Context (for prefix commands) or a specific interaction (for slash)
-                    # Currently, your ping, info, baginfo slash commands are designed to take 'interaction'
-                    # so this should work.
-                    await command_func.callback(
-                        interaction
-                    )  # Directly pass the interaction
-                    logger.info(
-                        f"User {interaction.user.id} clicked '{command_name}' button, executed command."
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Error executing command '{command_name}' from button: {e}"
-                    )
-                    await interaction.followup.send(
-                        f"An error occurred while trying to run `{command_name}`: `{e}`",
-                        ephemeral=False,
-                    )
-            else:
-                await interaction.followup.send(
-                    f"Command `{command_name}` not found or not callable.",
-                    ephemeral=False,
-                )
+            hasattr(self, "message") and self.message
+        ):  # Check if message attribute exists and is not None
+            try:
+                await self.message.edit(view=self)
+            except discord.NotFound:
+                # Message might have been deleted
                 logger.warning(
-                    f"Attempted to invoke non-existent/non-callable command '{command_name}' from button."
+                    "Tried to edit timed-out menu message, but it was not found."
                 )
+            except Exception as e:
+                logger.error(f"Error editing timed-out menu message: {e}")
+        else:
+            logger.warning(
+                "Menu view timed out but message attribute was not set or was None."
+            )
+
+    @discord.ui.button(
+        label="Click Me",
+        custom_id="default_button_id",
+        style=discord.ButtonStyle.primary,
+    )
+    async def on_command_button_click(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        # Extract command name from custom_id (e.g., "menu_button_info" -> "info")
+        command_name = button.custom_id.replace("menu_button_", "")
+        logger.info(f"User {interaction.user.id} clicked '{command_name}' button.")
+
+        # Defer the interaction immediately
+        if not interaction.response.is_done():  # Ensure we only defer once
+            await interaction.response.defer(ephemeral=False, thinking=True)
+
+        content_embed = None
+        current_view = self  # Keep the same view (buttons)
+
+        if command_name == "info":
+            content_embed = await create_info_embed(self.bot_instance)
+        elif command_name == "ping":
+            content_embed = await create_ping_embed(self.bot_instance)
+        elif command_name == "baginfo":
+            content_embed = await create_baginfo_embed(self.bot_instance)
+        elif command_name == "bags":
+            # For commands that require arguments, we can't execute them directly from a button
+            # Instead, instruct the user how to use it.
+            content_embed = discord.Embed(
+                title=f"Usage for /{command_name}",
+                description=f"The `/{command_name}` command requires arguments. Please type `/{command_name}` and follow the prompts.",
+                color=discord.Color.yellow(),
+            )
+        else:
+            content_embed = discord.Embed(
+                title="Command Not Found",
+                description="This command is not recognized or not yet implemented in the interactive menu.",
+                color=discord.Color.red(),
+            )
+
+        # Edit the original message to update its content, retaining the buttons
+        try:
+            await interaction.edit_original_response(
+                embed=content_embed, view=current_view
+            )
+            logger.info(f"Updated menu embed for command '{command_name}'.")
+        except discord.NotFound:
+            logger.warning(
+                f"Failed to edit original response for '{command_name}': Original message not found."
+            )
+        except Exception as e:
+            logger.error(f"Error editing original response for '{command_name}': {e}")
+
+    # You might want to remove this if you only use the decorator above,
+    # or ensure custom_id is set correctly.
+    # @discord.ui.button(...) # This line would be the actual button definition
+    # async def your_button_method(self, interaction: discord.Interaction, button: discord.ui.Button):
+    #    pass # Logic moved to on_command_button_click
 
 
 # --- Embed Generation Function for Menu ---
@@ -854,14 +982,10 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
 @bot.command(name="ping", description="Checks the bot's latency.")
 async def ping_prefix(ctx):
     logger.info(f"Prefix command 'ping' called by {ctx.author} ({ctx.author.id}).")
-    latency_ms = bot.latency * 1000
-    embed = discord.Embed(
-        title="🏓 Pong!",
-        description=f"Latency: `{latency_ms:.2f}ms`",
-        color=discord.Color.blue(),
-    )
-    await ctx.send(embed=embed)
-    logger.info(f"Sent ping response to {ctx.author.id}.")
+    async with ctx.typing():
+        embed = await create_ping_embed(bot)  # Use the new helper function
+        await ctx.send(embed=embed)
+        logger.info(f"Sent ping response to {ctx.author.id}.")
 
 
 @bot.tree.command(name="ping", description="Checks the bot's latency.")
@@ -873,12 +997,9 @@ async def ping_slash(interaction: discord.Interaction):
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=False, thinking=True)
 
-    latency_ms = bot.latency * 1000
-    embed = discord.Embed(
-        title="🏓 Pong!",
-        description=f"Latency: `{latency_ms:.2f}ms`",
-        color=discord.Color.blue(),
-    )
+    embed = await create_ping_embed(bot)  # Use the new helper function
+
+    # Always use followup.send
     await interaction.followup.send(embed=embed)
     logger.info(f"Sent ping response to {interaction.user.id}.")
 
@@ -886,38 +1007,10 @@ async def ping_slash(interaction: discord.Interaction):
 @bot.command(name="info", description="Displays general information about the bot.")
 async def info_prefix(ctx):
     logger.info(f"Prefix command 'info' called by {ctx.author} ({ctx.author.id}).")
-    embed = discord.Embed(
-        title="ℹ️ Bot Information",
-        description="I am a Discord bot designed to calculate soulstone probabilities for Castle Clash bag draws.",
-        color=discord.Color.blurple(),
-    )
-    if bot.user and bot.user.display_avatar:
-        embed.set_thumbnail(url=bot.user.display_avatar.url)
-
-    embed.add_field(name="Developer", value=OWNER_DISPLAY_NAME, inline=True)
-    embed.add_field(name="Library", value="discord.py", inline=True)
-    embed.add_field(
-        name="Source Code (If Available)",
-        value="[GitHub](https://github.com/eve718/ccBot)",
-        inline=False,
-    )
-    # Pre-format the online_since time
-    online_time_formatted = "Unknown"
-    if bot_online_since:
-        try:
-            online_time_formatted = discord.utils.format_dt(bot_online_since, "R")
-            logger.info(
-                f"Formatted online time string for footer: {online_time_formatted}"
-            )
-        except Exception as e:
-            logger.error(f"Error formatting bot_online_since: {e}")
-            online_time_formatted = "Error formatting time"
-    logger.info(
-        f"bot_online_since type: {type(bot_online_since)}, value: {bot_online_since}"
-    )
-    embed.set_footer(text=f"Bot Version: 1.0.0 | Online since: {online_time_formatted}")
-    await ctx.send(embed=embed)
-    logger.info(f"Sent info response to {ctx.author.id}.")
+    async with ctx.typing():
+        embed = await create_info_embed(bot)  # Use the new helper function
+        await ctx.send(embed=embed)
+        logger.info(f"Sent info response to {ctx.author.id}.")
 
 
 @bot.tree.command(
@@ -931,36 +1024,9 @@ async def info_slash(interaction: discord.Interaction):
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=False, thinking=True)
 
-    embed = discord.Embed(
-        title="ℹ️ Bot Information",
-        description="I am a Discord bot designed to calculate soulstone probabilities for Castle Clash bag draws.",
-        color=discord.Color.blurple(),
-    )
-    if bot.user and bot.user.display_avatar:
-        embed.set_thumbnail(url=bot.user.display_avatar.url)
+    embed = await create_info_embed(bot)  # Use the new helper function
 
-    embed.add_field(name="Developer", value=OWNER_DISPLAY_NAME, inline=True)
-    embed.add_field(name="Library", value="discord.py", inline=True)
-    embed.add_field(
-        name="Source Code (If Available)",
-        value="[GitHub](https://github.com/eve718/ccBot)",
-        inline=False,
-    )
-    # Pre-format the online_since time
-    online_time_formatted = "Unknown"
-    if bot_online_since:
-        try:
-            online_time_formatted = discord.utils.format_dt(bot_online_since, "R")
-            logger.info(
-                f"Formatted online time string for footer: {online_time_formatted}"
-            )
-        except Exception as e:
-            logger.error(f"Error formatting bot_online_since: {e}")
-            online_time_formatted = "Error formatting time"
-    logger.info(
-        f"bot_online_since type: {type(bot_online_since)}, value: {bot_online_since}"
-    )
-    embed.set_footer(text=f"Bot Version: 1.0.0 | Online since: {online_time_formatted}")
+    # Always use followup.send for the actual message
     await interaction.followup.send(embed=embed)
     logger.info(f"Sent info response to {interaction.user.id}.")
 
@@ -972,48 +1038,10 @@ async def info_slash(interaction: discord.Interaction):
 )
 async def baginfo_prefix(ctx):
     logger.info(f"Prefix command 'baginfo' called by {ctx.author} ({ctx.author.id}).")
-    bag1_exp, bag1_var = get_bag_stats(BAG_I_DEFINITION)
-    bag2_exp, bag2_var = get_bag_stats(BAG_II_DEFINITION)
-
-    embed = discord.Embed(
-        title="🛍️ Bag Information",
-        description="Details about the soulstone contents and average values for Bag I and Bag II.",
-        color=discord.Color.gold(),
-    )
-    if bot.user and bot.user.display_avatar:
-        embed.set_thumbnail(url=bot.user.display_avatar.url)
-
-    bag1_details = ""
-    for val, prob in BAG_I_DEFINITION:
-        bag1_details += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
-    embed.add_field(
-        name="Bag I Contents",
-        value=bag1_details,
-        inline=True,
-    )
-    embed.add_field(
-        name="Bag I Average",
-        value=f"`{bag1_exp:.2f}` Soulstones",
-        inline=True,
-    )
-
-    bag2_details = ""
-    for val, prob in BAG_II_DEFINITION:
-        bag2_details += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
-    embed.add_field(
-        name="Bag II Contents",
-        value=bag2_details,
-        inline=True,
-    )
-    embed.add_field(
-        name="Bag II Average",
-        value=f"`{bag2_exp:.2f}` Soulstones",
-        inline=True,
-    )
-
-    embed.set_footer(text=f"Information provided by Castle Clash")
-    await ctx.send(embed=embed)
-    logger.info(f"Sent baginfo response to {ctx.author.id}.")
+    async with ctx.typing():
+        embed = await create_baginfo_embed(bot)  # Use the new helper function
+        await ctx.send(embed=embed)
+        logger.info(f"Sent baginfo response to {ctx.author.id}.")
 
 
 @bot.tree.command(
@@ -1027,46 +1055,9 @@ async def baginfo_slash(interaction: discord.Interaction):
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=False, thinking=True)
 
-    bag1_exp, bag1_var = get_bag_stats(BAG_I_DEFINITION)
-    bag2_exp, bag2_var = get_bag_stats(BAG_II_DEFINITION)
+    embed = await create_baginfo_embed(bot)  # Use the new helper function
 
-    embed = discord.Embed(
-        title="🛍️ Bag Information",
-        description="Details about the soulstone contents and average values for Bag I and Bag II.",
-        color=discord.Color.gold(),
-    )
-    if bot.user and bot.user.display_avatar:
-        embed.set_thumbnail(url=bot.user.display_avatar.url)
-
-    bag1_details = ""
-    for val, prob in BAG_I_DEFINITION:
-        bag1_details += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
-    embed.add_field(
-        name="Bag I Contents",
-        value=bag1_details,
-        inline=True,
-    )
-    embed.add_field(
-        name="Bag I Average",
-        value=f"`{bag1_exp:.2f}` Soulstones",
-        inline=True,
-    )
-
-    bag2_details = ""
-    for val, prob in BAG_II_DEFINITION:
-        bag2_details += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
-    embed.add_field(
-        name="Bag II Contents",
-        value=bag2_details,
-        inline=True,
-    )
-    embed.add_field(
-        name="Bag II Average",
-        value=f"`{bag2_exp:.2f}` Soulstones",
-        inline=True,
-    )
-
-    embed.set_footer(text=f"Information provided by Castle Clash")
+    # Always use followup.send
     await interaction.followup.send(embed=embed)
     logger.info(f"Sent baginfo response to {interaction.user.id}.")
 
@@ -1074,10 +1065,13 @@ async def baginfo_slash(interaction: discord.Interaction):
 @bot.command(name="menu", description="Displays a list of available commands.")
 async def menu_prefix(ctx):
     logger.info(f"Prefix command 'menu' called by {ctx.author} ({ctx.author.id}).")
-    menu_embed = await create_menu_embed()
-    view = CommandMenuView(bot)
-    await ctx.send(embed=menu_embed, view=view)
-    logger.info(f"Sent menu response to {ctx.author.id}.")
+    async with ctx.typing():
+        initial_embed = await create_welcome_embed()  # Use the new welcome embed helper
+        view = CommandMenuView(bot_instance=bot)
+        # Store the message sent by the bot for the view to edit later
+        message = await ctx.send(embed=initial_embed, view=view)
+        view.message = message  # Pass the message object to the view for editing
+        logger.info(f"Sent menu response to {ctx.author.id}.")
 
 
 @bot.tree.command(name="menu", description="Displays a list of available commands.")
@@ -1091,9 +1085,11 @@ async def menu_slash(interaction: discord.Interaction):
             ephemeral=False, thinking=True
         )  # Keep ephemeral=False for menu
 
-    menu_embed = await create_menu_embed()
-    view = CommandMenuView(bot)
-    await interaction.followup.send(embed=menu_embed, view=view)
+    # Initial embed for the menu (e.g., a welcome message)
+    initial_embed = await create_welcome_embed()  # Use the new welcome embed helper
+    view = CommandMenuView(bot_instance=bot)
+
+    await interaction.followup.send(embed=initial_embed, view=view)
     logger.info(f"Sent menu response to {interaction.user.id}.")
 
 
