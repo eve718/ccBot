@@ -686,10 +686,18 @@ class CommandMenuView(discord.ui.View):
                     color=discord.Color.red(),
                 )
 
-            await interaction.edit_original_response(
-                embed=content_embed, view=current_view
-            )
-            logger.info(f"Updated menu embed for command '{command_name}'.")
+            # --- CRITICAL CHANGE HERE ---
+            # Instead of interaction.edit_original_response, use self.message.edit()
+            # This explicitly targets the message object that was sent when the menu was first opened.
+            if self.message:  # Ensure self.message has been set
+                await self.message.edit(embed=content_embed, view=current_view)
+                logger.info(f"Edited menu embed for command '{command_name}'.")
+            else:
+                # Fallback if self.message somehow isn't available (shouldn't happen if setup is correct)
+                logger.warning(
+                    f"Failed to edit menu embed for '{command_name}': self.message was not set."
+                )
+                await interaction.followup.send(embed=content_embed, ephemeral=True)
 
         except Exception as e:
             logger.error(
