@@ -5,7 +5,7 @@ from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
 import collections
-import random  # This import is not used in the current version, can be removed if not planning to use it.
+import random
 from collections import Counter
 import math
 import numpy as np
@@ -32,7 +32,7 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-bot.remove_command("help")  # Keep this line to remove default help, we'll make our own
+bot.remove_command("help")
 
 CALCULATION_TIMEOUT = 15
 EXACT_CALC_THRESHOLD_BOX1 = 100
@@ -42,9 +42,14 @@ PROB_DIFFERENCE_THRESHOLD = 0.001
 prefix_cooldowns = commands.CooldownMapping.from_cooldown(
     1, 10, commands.BucketType.user
 )
+# Cooldown for slash commands
+slash_cooldowns = app_commands.Cooldown(
+    1, 10.0, key=app_commands.CooldownMapping.default_key
+)
+
 
 # Global variable to store the owner's display name
-OWNER_DISPLAY_NAME = "Bot Owner"  # Default value in case fetching fails
+OWNER_DISPLAY_NAME = "Bot Owner"
 
 # --- Global Bag Definitions (Castle Clash Data) ---
 BAG_I_DEFINITION = [
@@ -71,6 +76,45 @@ logging.basicConfig(
     handlers=[logging.FileHandler("bot.log"), logging.StreamHandler()],
 )
 logger = logging.getLogger("discord_bot")
+
+# --- Command Menu Definition ---
+COMMAND_MENU = {
+    "bags": {
+        "description": "Calculates soulstone probabilities from bag draws.",
+        "usage_prefix": "`!bags <bag I count> <bag II count> <target soulstones>`",
+        "usage_slash": "`/bags bag1:<count> bag2:<count> ss:<target>`",
+        "emoji": "💎",
+        "has_args": True,  # Requires arguments
+    },
+    "baginfo": {
+        "description": "Displays information about Bag I and Bag II contents and their average values.",
+        "usage_prefix": "`!baginfo`",
+        "usage_slash": "`/baginfo`",
+        "emoji": "🛍️",
+        "has_args": False,  # No arguments
+    },
+    "ping": {
+        "description": "Checks the bot's latency.",
+        "usage_prefix": "`!ping`",
+        "usage_slash": "`/ping`",
+        "emoji": "🏓",
+        "has_args": False,  # No arguments
+    },
+    "info": {
+        "description": "Displays general information about the bot.",
+        "usage_prefix": "`!info`",
+        "usage_slash": "`/info`",
+        "emoji": "ℹ️",
+        "has_args": False,  # No arguments
+    },
+    "menu": {
+        "description": "Displays this command menu.",
+        "usage_prefix": "`!menu`",
+        "usage_slash": "`/menu`",
+        "emoji": "📚",
+        "has_args": False,  # No arguments
+    },
+}
 
 
 async def calculate_exact_probabilities(box_def, num_draws):
@@ -100,11 +144,13 @@ async def run_exact_calculation(box1_def, box2_def, draws_box1, draws_box2, targ
     prob_at_least_target = sum(
         prob for s, prob in combined_sums_probs.items() if s >= target_sum
     )
+    prob_exact_target = combined_sums_probs.get(target_sum, 0.0)
+
     sorted_sums = sorted(
         combined_sums_probs.items(), key=lambda item: item[1], reverse=True
     )
     top_3_sums_with_probs = [(s, p) for s, p in sorted_sums[:3]]
-    return (prob_at_least_target * 100, top_3_sums_with_probs)
+    return (prob_at_least_target * 100, top_3_sums_with_probs, prob_exact_target * 100)
 
 
 def simulate_single_bag_draws(box_def, num_draws):
@@ -112,12 +158,12 @@ def simulate_single_bag_draws(box_def, num_draws):
         return 0
     values = np.array([val for val, prob in box_def])
     probabilities = np.array([prob for val, prob in box_def])
-    probabilities /= probabilities.sum()  # Ensure probabilities sum to 1
+    probabilities /= probabilities.sum()
     total_sum = np.random.choice(values, size=num_draws, p=probabilities).sum()
     return int(total_sum)
 
 
-async def run_monte_carlo_simulation(  # Not currently used, but kept for future use if needed
+async def run_monte_carlo_simulation(
     box1_def, box2_def, draws_box1, draws_box2, target_sum, num_simulations
 ):
     successful_outcomes = 0
@@ -144,22 +190,20 @@ async def run_monte_carlo_simulation(  # Not currently used, but kept for future
 
 def get_bag_stats(box_def):
     expected_value = sum(val * prob for val, prob in box_def)
-    # Re-normalize to avoid issues if initial probabilities don't sum to exactly 1.0
     total_prob = sum(prob for val, prob in box_def)
     if total_prob != 0:
         expected_value /= total_prob
-    else:  # Handle case where total_prob is 0 to prevent division by zero
+    else:
         expected_value = 0
 
     variance = sum((val - expected_value) ** 2 * prob for val, prob in box_def)
     if total_prob != 0:
-        variance /= total_prob  # Also normalize variance
+        variance /= total_prob
     else:
-        variance = 0  # Handle case where total_prob is 0
+        variance = 0
     return expected_value, variance
 
 
-# --- Re-added run_normal_approximation ---
 def run_normal_approximation(box1_def, box2_def, draws_box1, draws_box2, target_sum):
     mean1, var1 = get_bag_stats(box1_def)
     mean2, var2 = get_bag_stats(box2_def)
@@ -167,24 +211,21 @@ def run_normal_approximation(box1_def, box2_def, draws_box1, draws_box2, target_
     total_variance = (var1 * draws_box1) + (var2 * draws_box2)
     total_std_dev = math.sqrt(total_variance)
 
-    if total_std_dev == 0:  # Avoid division by zero for constant sums
+    if total_std_dev == 0:
         if target_sum <= total_mean:
             return (
                 100.0,
                 [],
-            )  # If target is less than or equal to the fixed sum, prob is 100%
+            )
         else:
-            return 0.0, []  # Otherwise, prob is 0%
+            return 0.0, []
 
-    z_score = (
-        target_sum - 0.5 - total_mean
-    ) / total_std_dev  # Apply continuity correction
+    z_score = (target_sum - 0.5 - total_mean) / total_std_dev
     prob_at_least_target = (1 - norm.cdf(z_score)) * 100
     return prob_at_least_target, []
 
 
 async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
-    # Use global definitions
     box1_def_normalized = [
         (val, prob / sum(p for v, p in BAG_I_DEFINITION))
         for val, prob in BAG_I_DEFINITION
@@ -214,6 +255,11 @@ async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
             num_draws_box2,
             target_sum_value,
         )
+        result_data = (
+            result_data[0],
+            result_data[1],
+            0.0,
+        )  # Normal approx doesn't have exact prob
         method = "normal_approx"
     else:
         raise ValueError(
@@ -282,7 +328,7 @@ async def on_guild_join(guild):
     )
     embed.add_field(
         name="❓ Need More Help?",
-        value="Type `/help` or `!help` for detailed command information and tips, or `/info` for general bot info.",
+        value="Type `/menu` or `!menu` for a list of all commands.",
         inline=False,
     )
     embed.set_footer(text=f"Bot developed by {OWNER_DISPLAY_NAME}")
@@ -296,9 +342,60 @@ async def on_guild_join(guild):
                 break
 
 
+# --- Global slash command error handler ---
+@bot.tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction, error: app_commands.AppCommandError
+):
+    if isinstance(error, app_commands.CommandOnCooldown):
+        embed = discord.Embed(
+            title="⚠️ Cooldown Active",
+            description=f"This command is on cooldown. Please try again after `{error.retry_after:.2f}` seconds.",
+            color=discord.Color.orange(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        logger.info(
+            f"User {interaction.user.id} hit cooldown for slash command '{interaction.command.name}'."
+        )
+    elif isinstance(error, app_commands.MissingRequiredArgument):
+        embed = discord.Embed(
+            title="❌ Missing Arguments",
+            description=f"You're missing a required argument for this command: `{error.param.name}`.",
+            color=discord.Color.red(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        logger.warning(
+            f"Missing argument for slash command '{interaction.command.name}' from {interaction.user.id}: {error.param.name}"
+        )
+    elif isinstance(error, app_commands.BadArgument):
+        embed = discord.Embed(
+            title="❌ Invalid Input Type",
+            description=f"One of your inputs is invalid. Please check the argument types (e.g., ensure numbers are integers).",
+            color=discord.Color.red(),
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        logger.warning(
+            f"Bad argument for slash command '{interaction.command.name}' from {interaction.user.id}: {error}"
+        )
+    else:
+        embed = discord.Embed(
+            title="⚠️ Unexpected Error",
+            description=f"An unexpected error occurred: `{error}`. Please try again later.",
+            color=discord.Color.red(),
+        )
+        # Check if response was already sent
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        logger.exception(
+            f"Unhandled error in slash command '{interaction.command.name}' by {interaction.user.id}."
+        )
+
+
 # --- Embed Generation Function to ensure identical embeds ---
 async def create_bags_embed(
-    bag1, bag2, ss, prob_at_least_target, top_sums, method_used
+    bag1, bag2, ss, prob_at_least_target, top_sums, method_used, prob_exact_target=None
 ):
     embed = discord.Embed(
         title="📊 Soulstone Probability Results",
@@ -316,7 +413,6 @@ async def create_bags_embed(
         inline=False,
     )
 
-    # Use global definitions for expected values
     box1_exp_val, _ = get_bag_stats(BAG_I_DEFINITION)
     box2_exp_val, _ = get_bag_stats(BAG_II_DEFINITION)
 
@@ -334,13 +430,16 @@ async def create_bags_embed(
     elif method_used == "exact":
         calculation_method_note = "\n*(Result is exact)*"
 
+    prob_result_text = f"**Probability of Soulstones being at least `{ss}`:** `{prob_at_least_target:.4f}%`"
+    if method_used == "exact" and prob_exact_target is not None:
+        prob_result_text += f"\n**Probability of Soulstones being exactly `{ss}`:** `{prob_exact_target:.4f}%`"
+
+    prob_result_text += f"{calculation_method_note}\n"
+    prob_result_text += f"*Calculation Method: {method_used.replace('_', ' ').title()}*"
+
     embed.add_field(
         name="✅ Probability Result",
-        value=(
-            f"**Probability of Soulstones being at least `{ss}`:** `{prob_at_least_target:.4f}%`"
-            f"{calculation_method_note}\n"
-            f"*Calculation Method: {method_used.replace('_', ' ').title()}*"
-        ),
+        value=prob_result_text,
         inline=False,
     )
 
@@ -377,15 +476,126 @@ async def create_bags_embed(
     return embed
 
 
+# --- New: Interactive Menu View ---
+class CommandMenuView(discord.ui.View):
+    def __init__(self, bot_instance):
+        super().__init__(timeout=180)
+        self.bot_instance = bot_instance
+        self.add_commands_to_view()
+
+    def add_commands_to_view(self):
+        for cmd_name, cmd_details in COMMAND_MENU.items():
+            button_label = cmd_name.capitalize()
+            emoji = cmd_details.get("emoji")
+            has_args = cmd_details.get("has_args", False)
+
+            if has_args:
+                button = discord.ui.Button(
+                    label=button_label,
+                    style=discord.ButtonStyle.secondary,
+                    emoji=emoji,
+                    custom_id=f"menu_cmd_{cmd_name}",
+                    disabled=False,
+                )
+                button.callback = self.on_command_button_click
+            else:
+                button = discord.ui.Button(
+                    label=button_label,
+                    style=discord.ButtonStyle.primary,
+                    emoji=emoji,
+                    custom_id=f"menu_cmd_{cmd_name}",
+                )
+                button.callback = self.on_command_button_click
+            self.add_item(button)
+
+    async def on_command_button_click(self, interaction: discord.Interaction):
+        command_name = interaction.custom_id.replace("menu_cmd_", "")
+        cmd_details = COMMAND_MENU.get(command_name)
+
+        if not cmd_details:
+            await interaction.response.send_message("Unknown command.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=False, thinking=True)
+
+        if cmd_details.get("has_args"):
+            usage_slash = cmd_details.get("usage_slash", "N/A")
+            usage_prefix = cmd_details.get("usage_prefix", "N/A")
+            embed = discord.Embed(
+                title=f"💡 How to use: {command_name.capitalize()}",
+                description=f"This command requires arguments. Please use it as follows:",
+                color=discord.Color.blue(),
+            )
+            embed.add_field(name="Slash Command", value=usage_slash, inline=False)
+            embed.add_field(name="Prefix Command", value=usage_prefix, inline=False)
+            await interaction.followup.send(embed=embed, ephemeral=False)
+            logger.info(
+                f"User {interaction.user.id} clicked '{command_name}' button (has args), sent usage info."
+            )
+        else:
+            command_func = self.bot_instance.tree.get_command(command_name)
+            if command_func:
+                try:
+                    await command_func._invoke_with_argparse(interaction)
+                    logger.info(
+                        f"User {interaction.user.id} clicked '{command_name}' button, executed command."
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error executing command '{command_name}' from button: {e}"
+                    )
+                    await interaction.followup.send(
+                        f"An error occurred while trying to run `{command_name}`: `{e}`",
+                        ephemeral=False,
+                    )
+            else:
+                await interaction.followup.send(
+                    f"Command `{command_name}` not found or not callable.",
+                    ephemeral=False,
+                )
+                logger.warning(
+                    f"Attempted to invoke non-existent/non-callable command '{command_name}' from button."
+                )
+
+
+# --- Embed Generation Function for Menu ---
+async def create_menu_embed():
+    embed = discord.Embed(
+        title="📚 Bot Commands Menu",
+        description="Click a button below to learn more about a command or run it directly (if it has no arguments).",
+        color=discord.Color.purple(),
+    )
+    if bot.user and bot.user.display_avatar:
+        embed.set_thumbnail(url=bot.user.display_avatar.url)
+
+    for cmd_name, cmd_details in COMMAND_MENU.items():
+        description = cmd_details.get("description", "No description available.")
+        usage_prefix = cmd_details.get("usage_prefix", "N/A")
+        usage_slash = cmd_details.get("usage_slash", "N/A")
+        emoji = cmd_details.get("emoji", "")
+
+        embed.add_field(
+            name=f"{emoji} {cmd_name.capitalize()} Command",
+            value=(
+                f"{description}\n"
+                f"**Prefix Usage:** {usage_prefix}\n"
+                f"**Slash Usage:** {usage_slash}"
+            ),
+            inline=False,
+        )
+
+    embed.set_footer(text=f"Interact below! | Made by {OWNER_DISPLAY_NAME}")
+    return embed
+
+
 # --- Prefix Commands ---
-@bot.command(name="bags", aliases=["bag", "sscalc", "calculate"])  # Added aliases
+@bot.command(name="bags", aliases=["bag", "sscalc", "calculate"])
 async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
     logger.info(
         f"Prefix command 'bags' called by {ctx.author} ({ctx.author.id}) with args: bag1={bag1}, bag2={bag2}, ss={ss}"
     )
     bucket = prefix_cooldowns.get_bucket(ctx.message)
     retry_after = bucket.update_rate_limit()
-
     if retry_after:
         embed = discord.Embed(
             title="⚠️ Cooldown Active",
@@ -397,7 +607,7 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
         return
 
     if bag1 < 0 or bag2 < 0 or ss < 0:
-        bucket.reset()  # Reset cooldown if input is invalid
+        bucket.reset()
         embed = discord.Embed(
             title="❌ Invalid Input",
             description="Numbers of bags and soulstones goal must be non-negative integers.",
@@ -422,9 +632,10 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
     )
 
     try:
-        (prob_at_least_target, top_sums), method_used = await asyncio.wait_for(
+        result_data, method_used = await asyncio.wait_for(
             async_parser(bag1, bag2, ss), timeout=CALCULATION_TIMEOUT
         )
+        prob_at_least_target, top_sums, prob_exact_target = result_data
         logger.info(
             f"Calculation for {ctx.author.id} successful (method: {method_used})."
         )
@@ -460,11 +671,17 @@ async def bags_prefix(ctx, bag1: int, bag2: int, ss: int):
         await initial_message.edit(content=None, embed=embed)
         logger.exception(
             f"Unexpected error for {ctx.author.id} in 'bags' prefix command."
-        )  # Use exception for full traceback
+        )
         return
 
     final_embed = await create_bags_embed(
-        bag1, bag2, ss, prob_at_least_target, top_sums, method_used
+        bag1,
+        bag2,
+        ss,
+        prob_at_least_target,
+        top_sums,
+        method_used,
+        prob_exact_target,
     )
     await initial_message.edit(content=None, embed=final_embed)
 
@@ -501,167 +718,20 @@ async def bags_prefix_error(ctx, error):
         await ctx.send(embed=embed)
 
 
-# --- New Commands ---
-
-
-# Ping Command
-@bot.command(name="ping", description="Checks the bot's latency.")
-async def ping_prefix(ctx):
-    logger.info(f"Prefix command 'ping' called by {ctx.author} ({ctx.author.id}).")
-    latency_ms = round(bot.latency * 1000)
-    embed = discord.Embed(
-        title="🏓 Pong!",
-        description=f"Bot latency: `{latency_ms}ms`",
-        color=discord.Color.blue(),
-    )
-    await ctx.send(embed=embed)
-
-
-# Info Command
-@bot.command(name="info", description="Shows general information about the bot.")
-async def info_prefix(ctx):
-    logger.info(f"Prefix command 'info' called by {ctx.author} ({ctx.author.id}).")
-    embed = discord.Embed(
-        title="ℹ️ Soulstone Calculator Bot Info",
-        description="I'm a Discord bot designed to calculate soulstone probabilities from two types of bags.",
-        color=discord.Color.purple(),
-    )
-    if bot.user and bot.user.display_avatar:
-        embed.set_thumbnail(url=bot.user.display_avatar.url)
-
-    embed.add_field(
-        name="🌐 Version", value="1.0.0 (Enhanced)", inline=True
-    )  # You can update your version
-    embed.add_field(name="🛠️ Developer", value=OWNER_DISPLAY_NAME, inline=True)
-    embed.add_field(
-        name="📅 Created On",
-        value=f"<t:{int(bot.user.created_at.timestamp())}:D>",
-        inline=True,
-    )
-    embed.add_field(
-        name="🔗 Invite Me",
-        value="[Click Here](https://discord.com/oauth2/authorize?client_id=1376302750056579112&permissions=2147609600&integration_type=0&scope=bot+applications.commands)",  # REPLACE with your bot's invite link
-        inline=False,
-    )
-    embed.add_field(
-        name="⚙️ Calculation Methods",
-        value=(
-            f"• **Exact:** For up to {EXACT_CALC_THRESHOLD_BOX1} Bag I and {EXACT_CALC_THRESHOLD_BOX2} Bag II draws.\n"
-            f"• **Normal Approximation:** For larger draws (requires SciPy, currently {'Available' if SCIPY_AVAILABLE else 'Not Available'})."
-        ),
-        inline=False,
-    )
-    embed.set_footer(text=f"Powered by Discord.py | Bot ID: {bot.user.id}")
-    await ctx.send(embed=embed)
-
-
-# Bag Info Command
-@bot.command(
-    name="baginfo",
-    description="Shows the definitions and expected values of Bag I and Bag II.",
-)
-async def baginfo_prefix(ctx):
-    logger.info(f"Prefix command 'baginfo' called by {ctx.author} ({ctx.author.id}).")
-
-    bag1_exp_val, _ = get_bag_stats(BAG_I_DEFINITION)
-    bag2_exp_val, _ = get_bag_stats(BAG_II_DEFINITION)
-
-    embed = discord.Embed(
-        title="🛍️ Soulstone Bag Definitions (Castle Clash)",
-        description="Here are the contents and probabilities for each soulstone bag from Castle Clash:",
-        color=discord.Color.gold(),
-    )
-    if bot.user and bot.user.display_avatar:
-        embed.set_thumbnail(url=bot.user.display_avatar.url)
-
-    # Bag I
-    bag1_text = ""
-    for val, prob in BAG_I_DEFINITION:
-        bag1_text += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
-    bag1_text += f"**Expected Value per Draw:** `{bag1_exp_val:.2f}`"
-    embed.add_field(
-        name="Bag I", value=bag1_text, inline=False
-    )  # Changed title to "Bag I"
-
-    # Bag II
-    bag2_text = ""
-    for val, prob in BAG_II_DEFINITION:
-        bag2_text += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
-    bag2_text += f"**Expected Value per Draw:** `{bag2_exp_val:.2f}`"
-    embed.add_field(
-        name="Bag II", value=bag2_text, inline=False
-    )  # Changed title to "Bag II"
-
-    embed.set_footer(text=f"Data provided by Castle Clash")
-    await ctx.send(embed=embed)
-
-
-# --- Help Commands ---
-@bot.command(name="help")
-async def help_command_prefix(ctx):
-    logger.info(f"Prefix command 'help' called by {ctx.author} ({ctx.author.id}).")
-    embed = discord.Embed(
-        title="📚 Soulstone Calculator Help",
-        description="Here's how to use me to calculate your soulstone probabilities:",
-        color=discord.Color.blue(),
-    )
-    if bot.user and bot.user.display_avatar:
-        embed.set_thumbnail(url=bot.user.display_avatar.url)
-
-    embed.add_field(
-        name="💎 Main Command: `/bags` or `!bags`",
-        value="Calculates the probability of obtaining at least a target amount of soulstones from two types of bags.",
-        inline=False,
-    )
-    embed.add_field(
-        name="Usage for `/bags` (Slash Command):",
-        value="`/bags bag1:<number> bag2:<number> ss:<target_sum>`\n"
-        "Example: `/bags bag1:10 bag2:5 ss:200`\n"
-        "*(This is the recommended way to use the bot!)*",
-        inline=False,
-    )
-    embed.add_field(
-        name="Usage for `!bags` (Prefix Command):",
-        value="`!bags <number of bag I> <number of bag II> <soulstones goal>`\n"
-        "Example: `!bags 10 5 200`",
-        inline=False,
-    )
-    embed.add_field(
-        name="✨ Key Features:",
-        value=(
-            "• Automatically selects the best calculation method (exact for smaller inputs, Normal Approximation for larger).\n"
-            "• Provides the average expected soulstones.\n"
-            "• Displays the top 3 most likely sums for exact calculations (if distinct enough).\n"
-            "• Cooldown of `10 seconds` per user to prevent spam.\n"
-            "• Use `/baginfo` or `!baginfo` to see bag contents.\n"
-            "• Use `/info` or `!info` for general bot information."
-        ),
-        inline=False,
-    )
-    embed.set_footer(
-        text=f"Bot made by {OWNER_DISPLAY_NAME} | Use /help for slash command version"
-    )
-    await ctx.send(embed=embed)
-
-
 # --- Slash Commands ---
-@bot.tree.command(
-    name="bags",
-    description=f"Calculates the chance to obtain at least [ss] soulstones from [bag1] bags I and [bag2] bags II.",
-)
+@bot.tree.command(name="bags", description="Calculates soulstone probabilities.")
 @app_commands.describe(
     bag1="Number of Bag I draws",
     bag2="Number of Bag II draws",
-    ss="Target Soulstones (at least)",
+    ss="Target soulstones (at least)",
 )
-@app_commands.checks.cooldown(1, 10, key=lambda i: i.user.id)
+@app_commands.checks.cooldown(
+    1, 10.0, key=lambda i: (i.guild_id, i.user.id)
+)  # Per user, per guild cooldown
 async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss: int):
     logger.info(
         f"Slash command 'bags' called by {interaction.user} ({interaction.user.id}) with args: bag1={bag1}, bag2={bag2}, ss={ss}"
     )
-    await interaction.response.defer(
-        thinking=True, ephemeral=True
-    )  # Defer as ephemeral initially
 
     if bag1 < 0 or bag2 < 0 or ss < 0:
         embed = discord.Embed(
@@ -669,7 +739,7 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
             description="Numbers of bags and soulstones goal must be non-negative integers.",
             color=discord.Color.red(),
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)  # Ephemeral
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         logger.warning(
             f"Invalid input from {interaction.user.id} for 'bags' slash command: Negative numbers."
         )
@@ -683,14 +753,17 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
     else:
         calculation_method_display = "Inputs too large; approximation library (SciPy) not available. Calculation may fail."
 
-    await interaction.followup.send(
-        f"{calculation_method_display} Please wait...", ephemeral=True  # Ephemeral
+    # Defer the response immediately to avoid interaction timeout
+    await interaction.response.send_message(
+        f"{calculation_method_display} This might take a moment. Please wait...",
+        ephemeral=False,
     )
 
     try:
-        (prob_at_least_target, top_sums), method_used = await asyncio.wait_for(
+        result_data, method_used = await asyncio.wait_for(
             async_parser(bag1, bag2, ss), timeout=CALCULATION_TIMEOUT
         )
+        prob_at_least_target, top_sums, prob_exact_target = result_data
         logger.info(
             f"Calculation for {interaction.user.id} successful (method: {method_used})."
         )
@@ -700,9 +773,7 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
             description=f"The calculation took too long (more than `{CALCULATION_TIMEOUT}` seconds) and was cancelled. Please try with smaller bag numbers.",
             color=discord.Color.orange(),
         )
-        await interaction.followup.send(
-            embed=embed, ephemeral=False
-        )  # Not ephemeral, as this is a core error.
+        await interaction.followup.send(content=None, embed=embed, ephemeral=False)
         logger.warning(
             f"Calculation for {interaction.user.id} timed out for 'bags' slash command."
         )
@@ -713,9 +784,7 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
             description=f"Input error: {e}",
             color=discord.Color.red(),
         )
-        await interaction.followup.send(
-            embed=embed, ephemeral=False
-        )  # Not ephemeral, as this is a core error.
+        await interaction.followup.send(content=None, embed=embed, ephemeral=False)
         logger.error(
             f"Value error for {interaction.user.id} in 'bags' slash command: {e}"
         )
@@ -726,211 +795,242 @@ async def bags_slash(interaction: discord.Interaction, bag1: int, bag2: int, ss:
             description=f"An unexpected error occurred during calculation: `{e}`",
             color=discord.Color.red(),
         )
-        await interaction.followup.send(
-            embed=embed, ephemeral=False
-        )  # Not ephemeral, as this is a core error.
+        await interaction.followup.send(content=None, embed=embed, ephemeral=False)
         logger.exception(
             f"Unexpected error for {interaction.user.id} in 'bags' slash command."
-        )  # Use exception for full traceback
+        )
         return
 
     final_embed = await create_bags_embed(
-        bag1, bag2, ss, prob_at_least_target, top_sums, method_used
+        bag1,
+        bag2,
+        ss,
+        prob_at_least_target,
+        top_sums,
+        method_used,
+        prob_exact_target,
     )
-    await interaction.followup.send(
-        embed=final_embed, ephemeral=False
-    )  # Final result should be public
+    await interaction.followup.send(content=None, embed=final_embed)
 
 
-@bags_slash.error
-async def bags_slash_error(
-    interaction: discord.Interaction, error: app_commands.AppCommandError
-):
-    logger.error(f"Error in 'bags' slash command by {interaction.user.id}: {error}")
-    if isinstance(error, app_commands.CommandOnCooldown):
-        embed = discord.Embed(
-            title="⚠️ Cooldown Active",
-            description=f"This command is on cooldown for you. Please try again after `{error.retry_after:.2f}` seconds.",
-            color=discord.Color.orange(),
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-    elif isinstance(error, app_commands.BadArgument):
-        embed = discord.Embed(
-            title="❌ Invalid Input Type",
-            description="Invalid input. Please ensure bag numbers and soulstone goal are valid **integers**.",
-            color=discord.Color.red(),
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-    else:
-        embed = discord.Embed(
-            title="⚠️ Error",
-            description=f"An unexpected error occurred with the slash command: `{error}`",
-            color=discord.Color.red(),
-        )
-        await interaction.followup.send(
-            embed=embed, ephemeral=True
-        )  # Keep generic errors ephemeral
+# --- Commands (Prefix & Slash) - Continued from previous sections ---
+@bot.command(name="ping", description="Checks the bot's latency.")
+async def ping_prefix(ctx):
+    logger.info(f"Prefix command 'ping' called by {ctx.author} ({ctx.author.id}).")
+    latency_ms = bot.latency * 1000
+    embed = discord.Embed(
+        title="🏓 Pong!",
+        description=f"Latency: `{latency_ms:.2f}ms`",
+        color=discord.Color.blue(),
+    )
+    await ctx.send(embed=embed)
+    logger.info(f"Sent ping response to {ctx.author.id}.")
 
 
-# --- New Slash Commands ---
-
-
-# Ping Slash Command
 @bot.tree.command(name="ping", description="Checks the bot's latency.")
 async def ping_slash(interaction: discord.Interaction):
     logger.info(
         f"Slash command 'ping' called by {interaction.user} ({interaction.user.id})."
     )
-    latency_ms = round(bot.latency * 1000)
+    latency_ms = bot.latency * 1000
     embed = discord.Embed(
         title="🏓 Pong!",
-        description=f"Bot latency: `{latency_ms}ms`",
+        description=f"Latency: `{latency_ms:.2f}ms`",
         color=discord.Color.blue(),
     )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed)
+    logger.info(f"Sent ping response to {interaction.user.id}.")
 
 
-# Info Slash Command
-@bot.tree.command(name="info", description="Shows general information about the bot.")
+@bot.command(name="info", description="Displays general information about the bot.")
+async def info_prefix(ctx):
+    logger.info(f"Prefix command 'info' called by {ctx.author} ({ctx.author.id}).")
+    embed = discord.Embed(
+        title="ℹ️ Bot Information",
+        description="I am a Discord bot designed to calculate soulstone probabilities for Castle Clash bag draws.",
+        color=discord.Color.blurple(),
+    )
+    if bot.user and bot.user.display_avatar:
+        embed.set_thumbnail(url=bot.user.display_avatar.url)
+
+    embed.add_field(name="Developer", value=OWNER_DISPLAY_NAME, inline=True)
+    embed.add_field(name="Library", value="discord.py", inline=True)
+    embed.add_field(
+        name="Source Code (If Available)",
+        value="[GitHub](https://github.com/your-repo-link)",
+        inline=False,
+    )
+    embed.set_footer(
+        text=f"Bot Version: 1.0.0 | Online since: {discord.utils.format_dt(bot.user.created_at, 'R')}"
+    )
+    await ctx.send(embed=embed)
+    logger.info(f"Sent info response to {ctx.author.id}.")
+
+
+@bot.tree.command(
+    name="info", description="Displays general information about the bot."
+)
 async def info_slash(interaction: discord.Interaction):
     logger.info(
         f"Slash command 'info' called by {interaction.user} ({interaction.user.id})."
     )
     embed = discord.Embed(
-        title="ℹ️ Soulstone Calculator Bot Info",
-        description="I'm a Discord bot designed to calculate soulstone probabilities from two types of bags.",
-        color=discord.Color.purple(),
+        title="ℹ️ Bot Information",
+        description="I am a Discord bot designed to calculate soulstone probabilities for Castle Clash bag draws.",
+        color=discord.Color.blurple(),
     )
     if bot.user and bot.user.display_avatar:
         embed.set_thumbnail(url=bot.user.display_avatar.url)
 
-    embed.add_field(name="🌐 Version", value="1.0.0 (Enhanced)", inline=True)
-    embed.add_field(name="🛠️ Developer", value=OWNER_DISPLAY_NAME, inline=True)
+    embed.add_field(name="Developer", value=OWNER_DISPLAY_NAME, inline=True)
+    embed.add_field(name="Library", value="discord.py", inline=True)
     embed.add_field(
-        name="📅 Created On",
-        value=f"<t:{int(bot.user.created_at.timestamp())}:D>",
-        inline=True,
-    )
-    embed.add_field(
-        name="🔗 Invite Me",
-        value="[Click Here](https://discord.com/oauth2/authorize?client_id=1376302750056579112&permissions=2147609600&integration_type=0&scope=bot+applications.commands)",  # REPLACE with your bot's invite link
+        name="Source Code (If Available)",
+        value="[GitHub](https://github.com/your-repo-link)",
         inline=False,
     )
-    embed.add_field(
-        name="⚙️ Calculation Methods",
-        value=(
-            f"• **Exact:** For up to {EXACT_CALC_THRESHOLD_BOX1} Bag I and {EXACT_CALC_THRESHOLD_BOX2} Bag II draws.\n"
-            f"• **Normal Approximation:** For larger draws (requires SciPy, currently {'Available' if SCIPY_AVAILABLE else 'Not Available'})."
-        ),
-        inline=False,
+    embed.set_footer(
+        text=f"Bot Version: 1.0.0 | Online since: {discord.utils.format_dt(bot.user.created_at, 'R')}"
     )
-    embed.set_footer(text=f"Powered by Discord.py | Bot ID: {bot.user.id}")
-    await interaction.response.send_message(embed=embed, ephemeral=False)
+    await interaction.response.send_message(embed=embed)
+    logger.info(f"Sent info response to {interaction.user.id}.")
 
 
-# Bag Info Slash Command
-@bot.tree.command(
+@bot.command(
     name="baginfo",
-    description="Shows the definitions and expected values of Bag I and Bag II.",
+    aliases=["bagdetails"],
+    description="Displays information about Bag I and Bag II contents and their average values.",
 )
-async def baginfo_slash(interaction: discord.Interaction):
-    logger.info(
-        f"Slash command 'baginfo' called by {interaction.user} ({interaction.user.id})."
-    )
-
-    bag1_exp_val, _ = get_bag_stats(BAG_I_DEFINITION)
-    bag2_exp_val, _ = get_bag_stats(BAG_II_DEFINITION)
+async def baginfo_prefix(ctx):
+    logger.info(f"Prefix command 'baginfo' called by {ctx.author} ({ctx.author.id}).")
+    bag1_exp, bag1_var = get_bag_stats(BAG_I_DEFINITION)
+    bag2_exp, bag2_var = get_bag_stats(BAG_II_DEFINITION)
 
     embed = discord.Embed(
-        title="🛍️ Soulstone Bag Definitions (Castle Clash)",
-        description="Here are the contents and probabilities for each soulstone bag from Castle Clash:",
+        title="🛍️ Bag Information",
+        description="Details about the soulstone contents and average values for Bag I and Bag II.",
         color=discord.Color.gold(),
     )
     if bot.user and bot.user.display_avatar:
         embed.set_thumbnail(url=bot.user.display_avatar.url)
 
-    # Bag I
-    bag1_text = ""
+    bag1_details = ""
     for val, prob in BAG_I_DEFINITION:
-        bag1_text += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
-    bag1_text += f"**Expected Value per Draw:** `{bag1_exp_val:.2f}`"
-    embed.add_field(name="Bag I", value=bag1_text, inline=False)
+        bag1_details += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
+    embed.add_field(
+        name="Bag I Contents",
+        value=bag1_details,
+        inline=True,
+    )
+    embed.add_field(
+        name="Bag I Average",
+        value=f"`{bag1_exp:.2f}` Soulstones",
+        inline=True,
+    )
 
-    # Bag II
-    bag2_text = ""
+    bag2_details = ""
     for val, prob in BAG_II_DEFINITION:
-        bag2_text += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
-    bag2_text += f"**Expected Value per Draw:** `{bag2_exp_val:.2f}`"
-    embed.add_field(name="Bag II", value=bag2_text, inline=False)
+        bag2_details += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
+    embed.add_field(
+        name="Bag II Contents",
+        value=bag2_details,
+        inline=True,
+    )
+    embed.add_field(
+        name="Bag II Average",
+        value=f"`{bag2_exp:.2f}` Soulstones",
+        inline=True,
+    )
 
-    embed.set_footer(text=f"Data provided by Castle Clash")
-    await interaction.response.send_message(embed=embed, ephemeral=False)
+    embed.set_footer(text=f"Information provided by {bot.user.name}")
+    await ctx.send(embed=embed)
+    logger.info(f"Sent baginfo response to {ctx.author.id}.")
 
 
 @bot.tree.command(
-    name="help", description="Shows information about the bot and its commands."
+    name="baginfo", description="Displays information about Bag I and Bag II."
 )
-async def help_command_slash(interaction: discord.Interaction):
+async def baginfo_slash(interaction: discord.Interaction):
     logger.info(
-        f"Slash command 'help' called by {interaction.user} ({interaction.user.id})."
+        f"Slash command 'baginfo' called by {interaction.user} ({interaction.user.id})."
     )
+    bag1_exp, bag1_var = get_bag_stats(BAG_I_DEFINITION)
+    bag2_exp, bag2_var = get_bag_stats(BAG_II_DEFINITION)
+
     embed = discord.Embed(
-        title="📚 Soulstone Calculator Help",
-        description="Here's how to use me to calculate your soulstone probabilities:",
-        color=discord.Color.blue(),
+        title="🛍️ Bag Information",
+        description="Details about the soulstone contents and average values for Bag I and Bag II.",
+        color=discord.Color.gold(),
     )
     if bot.user and bot.user.display_avatar:
         embed.set_thumbnail(url=bot.user.display_avatar.url)
 
+    bag1_details = ""
+    for val, prob in BAG_I_DEFINITION:
+        bag1_details += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
     embed.add_field(
-        name="💎 Main Command: `/bags`",
-        value="Calculates the probability of obtaining at least a target amount of soulstones from two types of bags.",
-        inline=False,
+        name="Bag I Contents",
+        value=bag1_details,
+        inline=True,
     )
     embed.add_field(
-        name="Usage:",
-        value="`/bags bag1:<number> bag2:<number> ss:<target_sum>`\n"
-        "Example: `/bags bag1:10 bag2:5 ss:200`\n"
-        "*(This is the recommended way to use the bot!)*",
-        inline=False,
+        name="Bag I Average",
+        value=f"`{bag1_exp:.2f}` Soulstones",
+        inline=True,
+    )
+
+    bag2_details = ""
+    for val, prob in BAG_II_DEFINITION:
+        bag2_details += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
+    embed.add_field(
+        name="Bag II Contents",
+        value=bag2_details,
+        inline=True,
     )
     embed.add_field(
-        name="💡 Prefix Command (Alternative): `!bags`",
-        value=(
-            "**Usage:** `!bags <number of bag I> <number of bag II> <soulstones goal>`\n"
-            "**Example:** `!bags 10 5 200`"
-        ),
-        inline=False,
+        name="Bag II Average",
+        value=f"`{bag2_exp:.2f}` Soulstones",
+        inline=True,
     )
-    embed.add_field(
-        name="✨ Key Features:",
-        value=(
-            "• Automatically selects the best calculation method (exact for smaller inputs, Normal Approximation for larger).\n"
-            "• Provides the average expected soulstones.\n"
-            "• Displays the top 3 most likely sums for exact calculations (if distinct enough).\n"
-            "• Cooldown of `10 seconds` per user to prevent spam.\n"
-            "• Use `/baginfo` or `!baginfo` to see bag contents.\n"
-            "• Use `/info` or `!info` for general bot information."
-        ),
-        inline=False,
-    )
-    embed.set_footer(text=f"Bot made by {OWNER_DISPLAY_NAME}")
-    await interaction.response.send_message(embed=embed, ephemeral=False)
+
+    embed.set_footer(text=f"Information provided by {bot.user.name}")
+    await interaction.response.send_message(embed=embed)
+    logger.info(f"Sent baginfo response to {interaction.user.id}.")
 
 
-# --- Owner-Only Commands ---
+@bot.command(name="menu", description="Displays a list of available commands.")
+async def menu_prefix(ctx):
+    logger.info(f"Prefix command 'menu' called by {ctx.author} ({ctx.author.id}).")
+    menu_embed = await create_menu_embed()
+    view = CommandMenuView(bot)
+    await ctx.send(embed=menu_embed, view=view)
+    logger.info(f"Sent menu response to {ctx.author.id}.")
+
+
+@bot.tree.command(name="menu", description="Displays a list of available commands.")
+async def menu_slash(interaction: discord.Interaction):
+    logger.info(
+        f"Slash command 'menu' called by {interaction.user} ({interaction.user.id})."
+    )
+    menu_embed = await create_menu_embed()
+    view = CommandMenuView(bot)
+    await interaction.response.send_message(embed=menu_embed, view=view)
+    logger.info(f"Sent menu response to {interaction.user.id}.")
+
+
+# --- Owner Only Commands ---
 @bot.command(name="sync", description="[Owner Only] Syncs slash commands globally.")
 @commands.is_owner()
 async def sync_prefix(ctx):
     logger.info(f"Owner {ctx.author.id} called 'sync' prefix command.")
     await ctx.send("Syncing slash commands globally. This may take a moment...")
     try:
-        await bot.tree.sync()  # Syncs all global commands
+        await bot.tree.sync()
         await ctx.send("Slash commands synced successfully!")
-        logger.info("Slash commands synced via owner command.")
+        logger.info("Slash commands synced via owner prefix command.")
     except Exception as e:
         await ctx.send(f"Failed to sync slash commands: `{e}`")
-        logger.error(f"Failed to sync slash commands via owner command: {e}")
+        logger.error(f"Failed to sync slash commands via owner prefix command: {e}")
 
 
 @bot.tree.command(
