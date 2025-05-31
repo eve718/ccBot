@@ -540,7 +540,7 @@ async def info_prefix(ctx):
     )
     embed.add_field(
         name="🔗 Invite Me",
-        value="[Click Here](https://discord.com/oauth2/authorize?client_id=1376302750056579112&permissions=8&integration_type=0&scope=bot)",  # REPLACE with your bot's invite link
+        value="[Click Here](https://discord.com/oauth2/authorize?client_id=1376302750056579112&permissions=2147609600&integration_type=0&scope=bot+applications.commands)",  # REPLACE with your bot's invite link
         inline=False,
     )
     embed.add_field(
@@ -813,7 +813,7 @@ async def info_slash(interaction: discord.Interaction):
     )
     embed.add_field(
         name="🔗 Invite Me",
-        value="[Click Here](https://discord.com/api/oauth2/authorize?client_id=YOUR_BOT_CLIENT_ID&permissions=YOUR_PERMISSIONS&scope=bot%20applications.commands)",  # REPLACE with your bot's invite link
+        value="[Click Here](https://discord.com/oauth2/authorize?client_id=1376302750056579112&permissions=2147609600&integration_type=0&scope=bot+applications.commands)",  # REPLACE with your bot's invite link
         inline=False,
     )
     embed.add_field(
