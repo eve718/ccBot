@@ -43,6 +43,8 @@ prefix_cooldowns = commands.CooldownMapping.from_cooldown(
     1, 10, commands.BucketType.user
 )
 
+bot_online_since = None
+
 
 # Global variable to store the owner's display name
 OWNER_DISPLAY_NAME = "Bot Owner"
@@ -268,7 +270,10 @@ async def async_parser(num_draws_box1, num_draws_box2, target_sum_value):
 @bot.event
 async def on_ready():
     global OWNER_DISPLAY_NAME
+    global bot_online_since  # Declare it global here
     logger.info(f"Logged on as {bot.user}!")
+    bot_online_since = discord.utils.utcnow()  # Store the current UTC time
+
     try:
         await bot.tree.sync()
         logger.info("Slash commands synced successfully.")
@@ -505,11 +510,26 @@ class CommandMenuView(discord.ui.View):
             self.add_item(button)
 
     async def on_command_button_click(self, interaction: discord.Interaction):
-        command_name = interaction.custom_id.replace("menu_cmd_", "")
+        # Safely try to get custom_id
+        if (
+            interaction.type == discord.InteractionType.component
+            and interaction.data
+            and "custom_id" in interaction.data
+        ):
+            custom_id = interaction.data["custom_id"]
+        else:
+            # Fallback or error handling if custom_id is not found as expected
+            logger.error(f"Interaction data missing custom_id: {interaction}")
+            await interaction.response.send_message(
+                "Failed to process button click: Missing custom ID.", ephemeral=True
+            )
+            return
+
+        command_name = custom_id.replace("menu_cmd_", "")
         cmd_details = COMMAND_MENU.get(command_name)
 
         if not cmd_details:
-            await interaction.response.send_message("Unknown command.", ephemeral=True)
+            await interaction.followup.send("Unknown command.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=False, thinking=True)
@@ -532,7 +552,12 @@ class CommandMenuView(discord.ui.View):
             command_func = self.bot_instance.tree.get_command(command_name)
             if command_func:
                 try:
-                    await command_func._invoke_with_argparse(interaction)
+                    # For commands without arguments, directly invoke them as app commands
+                    # You might need to adjust how these commands are designed if they expect
+                    # a Context (for prefix commands) or a specific interaction (for slash)
+                    # Currently, your ping, info, baginfo slash commands are designed to take 'interaction'
+                    # so this should work.
+                    await command_func(interaction)  # Directly pass the interaction
                     logger.info(
                         f"User {interaction.user.id} clicked '{command_name}' button, executed command."
                     )
@@ -853,11 +878,11 @@ async def info_prefix(ctx):
     embed.add_field(name="Library", value="discord.py", inline=True)
     embed.add_field(
         name="Source Code (If Available)",
-        value="[GitHub](https://github.com/your-repo-link)",
+        value="[GitHub](https://github.com/eve718/ccBot)",
         inline=False,
     )
     embed.set_footer(
-        text=f"Bot Version: 1.0.0 | Online since: {discord.utils.format_dt(bot.user.created_at, 'R')}"
+        text=f"Bot Version: 1.0.0 | Online since: {discord.utils.format_dt(bot_online_since, 'R')}"
     )
     await ctx.send(embed=embed)
     logger.info(f"Sent info response to {ctx.author.id}.")
@@ -882,11 +907,11 @@ async def info_slash(interaction: discord.Interaction):
     embed.add_field(name="Library", value="discord.py", inline=True)
     embed.add_field(
         name="Source Code (If Available)",
-        value="[GitHub](https://github.com/your-repo-link)",
+        value="[GitHub](https://github.com/eve718/ccBot)",
         inline=False,
     )
     embed.set_footer(
-        text=f"Bot Version: 1.0.0 | Online since: {discord.utils.format_dt(bot.user.created_at, 'R')}"
+        text=f"Bot Version: 1.0.0 | Online since: {discord.utils.format_dt(bot_online_since, 'R')}"
     )
     await interaction.response.send_message(embed=embed)
     logger.info(f"Sent info response to {interaction.user.id}.")
