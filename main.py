@@ -605,89 +605,75 @@ class CommandMenuView(discord.ui.View):
     def __init__(self, bot_instance: commands.Bot, timeout=300):
         super().__init__(timeout=timeout)
         self.bot_instance = bot_instance
-        self.message = None  # IMPORTANT: Initialize message to None
-
-        # Add your desired buttons here.
-        # Assign self.on_command_button_click as the callback for EACH button
-        info_button = discord.ui.Button(
-            label="Info",
-            custom_id="menu_button_info",
-            style=discord.ButtonStyle.primary,
+        self.message = (
+            None  # IMPORTANT: Initialize message to None for later assignment
         )
-        info_button.callback = self.on_command_button_click  # Assign callback
-        self.add_item(info_button)
 
-        baginfo_button = discord.ui.Button(
-            label="Bag Info",
-            custom_id="menu_button_baginfo",
-            style=discord.ButtonStyle.primary,
-        )
-        baginfo_button.callback = self.on_command_button_click  # Assign callback
-        self.add_item(baginfo_button)
+    # Define each button using the @discord.ui.button decorator.
+    # Each button will have its own callback method that then calls the shared _handle_button_click.
+    @discord.ui.button(
+        label="Info", custom_id="menu_button_info", style=discord.ButtonStyle.primary
+    )
+    async def info_button_callback(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        # Call the central handler for all button logic
+        await self._handle_button_click(interaction, button)
 
-        bags_button = discord.ui.Button(
-            label="Bags (Input Args)",
-            custom_id="menu_button_bags",
-            style=discord.ButtonStyle.secondary,
-        )
-        bags_button.callback = self.on_command_button_click  # Assign callback
-        self.add_item(bags_button)
+    @discord.ui.button(
+        label="Bag Info",
+        custom_id="menu_button_baginfo",
+        style=discord.ButtonStyle.primary,
+    )
+    async def baginfo_button_callback(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        # Call the central handler for all button logic
+        await self._handle_button_click(interaction, button)
 
-        ping_button = discord.ui.Button(
-            label="Ping",
-            custom_id="menu_button_ping",
-            style=discord.ButtonStyle.primary,
-        )
-        ping_button.callback = self.on_command_button_click  # Assign callback
-        self.add_item(ping_button)
+    @discord.ui.button(
+        label="Bags (Input Args)",
+        custom_id="menu_button_bags",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def bags_button_callback(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        # Call the central handler for all button logic
+        await self._handle_button_click(interaction, button)
 
-    async def on_timeout(self):
-        # Disable all buttons when the view times out
-        for item in self.children:
-            item.disabled = True
-        # Edit the original message to reflect the disabled state
-        if (
-            hasattr(self, "message") and self.message
-        ):  # Check if message attribute exists and is not None
-            try:
-                await self.message.edit(view=self)
-            except discord.NotFound:
-                # Message might have been deleted
-                logger.warning(
-                    "Tried to edit timed-out menu message, but it was not found."
-                )
-            except Exception as e:
-                logger.error(f"Error editing timed-out menu message: {e}")
-        else:
-            logger.warning(
-                "Menu view timed out but message attribute was not set or was None."
-            )
+    @discord.ui.button(
+        label="Ping", custom_id="menu_button_ping", style=discord.ButtonStyle.primary
+    )
+    async def ping_button_callback(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        # Call the central handler for all button logic
+        await self._handle_button_click(interaction, button)
 
-    async def on_command_button_click(
+    # This is the new central handler for all button click logic.
+    # It receives 'interaction' and 'button' correctly from the decorated methods above.
+    async def _handle_button_click(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         try:
             # Always defer the interaction as the very first step in the try block
-            # This acknowledges the interaction within Discord's 3-second timeout.
             if not interaction.response.is_done():
                 await interaction.response.defer(ephemeral=False, thinking=True)
 
-            # Now, safely extract command name and log, knowing interaction is acknowledged.
             command_name = button.custom_id.replace("menu_button_", "")
             logger.info(f"User {interaction.user.id} clicked '{command_name}' button.")
 
             content_embed = None
-            current_view = self  # Keep the same view (buttons)
+            current_view = self
 
             if command_name == "info":
                 content_embed = await create_info_embed(self.bot_instance)
             elif command_name == "ping":
                 content_embed = await create_ping_embed(self.bot_instance)
             elif command_name == "baginfo":
-                # Ensure bot_instance is passed to create_baginfo_embed
                 content_embed = await create_baginfo_embed(self.bot_instance)
             elif command_name == "bags":
-                # For commands that require arguments, instruct the user
                 content_embed = discord.Embed(
                     title=f"Usage for /{command_name}",
                     description=f"The `/{command_name}` command requires arguments. Please type `/{command_name}` and follow the prompts.",
@@ -700,32 +686,46 @@ class CommandMenuView(discord.ui.View):
                     color=discord.Color.red(),
                 )
 
-            # Edit the original message to update its content, retaining the buttons
-            # Use interaction.edit_original_response for deferred interactions
             await interaction.edit_original_response(
                 embed=content_embed, view=current_view
             )
             logger.info(f"Updated menu embed for command '{command_name}'.")
 
         except Exception as e:
-            # Catch any unexpected errors, log them, and send a user-friendly message
             logger.error(
                 f"UNCAUGHT ERROR during menu button click (custom_id: {button.custom_id}): {e}",
                 exc_info=True,
             )
 
-            # Try to send a message to the user if the interaction hasn't been responded to yet
             if not interaction.response.is_done():
                 await interaction.response.send_message(
                     "An unexpected error occurred while processing your request. The bot owner has been notified.",
                     ephemeral=True,
                 )
             else:
-                # If already deferred, use followup to send the error message
                 await interaction.followup.send(
                     "An unexpected error occurred after starting your request. The bot owner has been notified.",
                     ephemeral=True,
                 )
+
+    async def on_timeout(self):
+        # This method remains unchanged
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+                logger.info("Menu view timed out and buttons disabled.")
+            except discord.NotFound:
+                logger.warning(
+                    "Tried to edit timed-out menu message, but it was not found."
+                )
+            except Exception as e:
+                logger.error(f"Error editing timed-out menu message: {e}")
+        else:
+            logger.warning(
+                "Menu view timed out but message attribute was not set, cannot disable buttons."
+            )
 
 
 # --- Embed Generation Function for Menu ---
