@@ -469,7 +469,7 @@ async def create_baginfo_embed(
     for val, prob in BAG_I_DEFINITION:
         bag1_contents_text += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
     embed.add_field(
-        name="Bag I (Box 1) Contents & Averages",
+        name="Bag I Contents & Averages",
         value=(
             f"**Individual Probabilities:**\n{bag1_contents_text}"
             f"**Average Expected per draw:** `{bag1_exp:.2f}` Soulstones\n"
@@ -483,7 +483,7 @@ async def create_baginfo_embed(
     for val, prob in BAG_II_DEFINITION:
         bag2_contents_text += f"`{val}` Soulstones: `{prob*100:.2f}%`\n"
     embed.add_field(
-        name="Bag II (Box 2) Contents & Averages",
+        name="Bag II Contents & Averages",
         value=(
             f"**Individual Probabilities:**\n{bag2_contents_text}"
             f"**Average Expected per draw:** `{bag2_exp:.2f}` Soulstones\n"
@@ -663,11 +663,6 @@ class CommandMenuView(discord.ui.View):
                 "Menu view timed out but message attribute was not set or was None."
             )
 
-    @discord.ui.button(
-        label="Click Me",
-        custom_id="default_button_id",
-        style=discord.ButtonStyle.primary,
-    )
     async def on_command_button_click(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
