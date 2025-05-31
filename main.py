@@ -10,6 +10,7 @@ from collections import Counter
 import math
 import numpy as np
 import logging
+import datetime
 
 try:
     from scipy.stats import norm
@@ -409,31 +410,67 @@ async def on_app_command_error(
 
 
 async def create_info_embed(bot_instance: commands.Bot):
-    """Creates the embed for the /info command."""
-    embed = discord.Embed(
-        title="ℹ️ Bot Information",
-        description="I am a Discord bot designed to calculate soulstone probabilities for Castle Clash bag draws.",
-        color=discord.Color.blurple(),
-    )
-    if bot_instance.user and bot_instance.user.display_avatar:
-        embed.set_thumbnail(url=bot_instance.user.display_avatar.url)
+    """Creates an embed with bot information."""
+    owner_name = OWNER_DISPLAY_NAME
+    if bot_instance.owner_id:
+        try:
+            owner = await bot_instance.fetch_user(bot_instance.owner_id)
+            if owner:
+                owner_name = owner.display_name
+        except discord.NotFound:
+            logger.warning(f"Owner with ID {bot_instance.owner_id} not found.")
+        except discord.HTTPException as e:
+            logger.error(f"Failed to fetch owner user: {e}")
 
-    embed.add_field(name="Developer", value=OWNER_DISPLAY_NAME, inline=True)
-    embed.add_field(name="Library", value="discord.py", inline=True)
+    # --- Change for Uptime Formatting ---
+    uptime_display = "Not available"
+    if bot_online_since:
+        # Convert the datetime object to a Unix timestamp (integer seconds since epoch)
+        timestamp = int(bot_online_since.timestamp())
+        # Format for Discord's relative timestamp: <t:TIMESTAMP:R>
+        uptime_display = f"<t:{timestamp}:R>"
+    # ------------------------------------
+
+    embed = discord.Embed(
+        title="🤖 About This Bot",
+        description=(
+            "This is a custom Discord bot designed to help users with "
+            "various utility commands, specifically focused on game-related "
+            "calculations and information. It's built to be interactive and user-friendly."
+        ),
+        color=discord.Color.blue(),
+    )
+
+    embed.set_thumbnail(
+        url=(
+            bot_instance.user.avatar.url
+            if bot_instance.user.avatar
+            else discord.Embed.Empty
+        )
+    )
+    embed.add_field(name="Owner", value=owner_name, inline=True)
     embed.add_field(
-        name="Source Code (If Available)",
-        value="[GitHub](https://github.com/your-repo-link)",  # Make sure this is your actual link!
+        name="Latency", value=f"{bot_instance.latency * 1000:.2f}ms", inline=True
+    )
+    # Use the new uptime_display variable here
+    embed.add_field(name="Uptime", value=uptime_display, inline=True)
+    embed.add_field(name="Guilds", value=len(bot_instance.guilds), inline=True)
+    embed.add_field(name="Users", value=len(bot_instance.users), inline=True)
+
+    # --- Add your Source Code and Bot Invite Links here ---
+    embed.add_field(
+        name="Source Code",
+        value="[View on GitHub](YOUR_GITHUB_REPO_URL_HERE)",
         inline=False,
     )
-    online_time_formatted = "Unknown"
-    if bot_online_since:
-        try:
-            online_time_formatted = discord.utils.format_dt(bot_online_since, "R")
-        except Exception as e:
-            logger.error(f"Error formatting bot_online_since: {e}")
-            online_time_formatted = "Error formatting time"
-    # Note: We're keeping the full footer for now, as the test for simplifying it was not applied.
-    embed.set_footer(text=f"Bot Version: 1.0.0 | Online since: {online_time_formatted}")
+    embed.add_field(
+        name="Invite Bot",
+        value="[Add to Your Server](YOUR_BOT_INVITE_LINK_HERE)",
+        inline=False,
+    )
+    # --------------------------------------------------------
+
+    embed.set_footer(text="Thank you for using the bot!")
     return embed
 
 
@@ -697,15 +734,13 @@ class CommandMenuView(discord.ui.View):
                     f"Failed to edit menu embed for '{command_name}': self.message was not set."
                 )
                 await interaction.followup.send(embed=content_embed, ephemeral=True)
+                return
 
-            #    Since self.message.edit() already updated the main message, we just need to tell
-            #    Discord that the *deferred button interaction* is complete.
-            #    Sending a very short-lived ephemeral followup message is a common way to do this.
-            await interaction.followup.send(
-                "...", ephemeral=True, delete_after=0.1
-            )  # Sends a tiny, invisible message that immediately disappears
+            #    Since the main message is already updated by self.message.edit(),
+            #    we just need to delete the temporary "Bot is thinking..." message created by the deferral.
+            await interaction.delete_original_response()  # This deletes the "Bot is thinking..." message
             logger.info(
-                f"Dismissed 'Bot is thinking...' for '{command_name}' button click."
+                f"Dismissed 'Bot is thinking...' message for '{command_name}' button click."
             )
 
         except Exception as e:
