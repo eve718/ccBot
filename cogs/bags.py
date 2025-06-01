@@ -302,8 +302,12 @@ async def create_bags_embed(
             inline=False,
         )
 
+    # Access the OWNER_DISPLAY_NAME from the bot_instance
+    owner_name = getattr(
+        bot_instance, "OWNER_DISPLAY_NAME", "Bot Owner"
+    )  # Fallback in case it's not set
     embed.set_footer(
-        text=f"Calculated by {bot_instance.user.name} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')} | Made by {bot_instance.OWNER_DISPLAY_NAME}"
+        text=f"Calculated by {bot_instance.user.name} • {discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')} | Made by {owner_name}"
     )
     return embed
 
