@@ -38,7 +38,7 @@ EXACT_CALC_THRESHOLD_BOX2 = 100
 PROB_DIFFERENCE_THRESHOLD = 0.001
 
 # Global variable for bot online time and owner display name
-bot_online_since = None
+# bot_online_since = None
 OWNER_DISPLAY_NAME = "Bot Owner"  # Default, will be updated on_ready
 
 # Configure logging (can also be in a separate logging_config.py)
@@ -76,9 +76,8 @@ BAG_II_DEFINITION = [
 @bot.event
 async def on_ready():
     global OWNER_DISPLAY_NAME
-    global bot_online_since
     logger.info(f"Logged on as {bot.user}!")
-    bot_online_since = discord.utils.utcnow()
+    bot.bot_online_since = discord.utils.utcnow()
 
     # Set bot owner ID and fetch name
     if OWNER:
@@ -240,7 +239,6 @@ bot.SCIPY_AVAILABLE = SCIPY_AVAILABLE
 bot.BAG_I_DEFINITION = BAG_I_DEFINITION
 bot.BAG_II_DEFINITION = BAG_II_DEFINITION
 bot.OWNER_DISPLAY_NAME = OWNER_DISPLAY_NAME  # This will be updated on_ready
-bot.bot_online_since = bot_online_since  # This will be updated on_ready
 bot.prefix_cooldowns = commands.CooldownMapping.from_cooldown(
     1, 10, commands.BucketType.user
 )
