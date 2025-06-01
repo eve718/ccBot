@@ -100,6 +100,11 @@ async def on_ready():
             "OWNER_ID not set in .env. Owner-only commands may not work correctly."
         )
 
+    # Assign the (now updated) global OWNER_DISPLAY_NAME to the bot object
+    # directly within on_ready(). This ensures it's set after fetching.
+    bot.OWNER_DISPLAY_NAME = OWNER_DISPLAY_NAME
+    logger.info(f"Bot's OWNER_DISPLAY_NAME attribute set to: {bot.OWNER_DISPLAY_NAME}")
+
     # Load cogs here
     initial_extensions = [
         "cogs.general",
@@ -238,7 +243,6 @@ bot.PROB_DIFFERENCE_THRESHOLD = PROB_DIFFERENCE_THRESHOLD
 bot.SCIPY_AVAILABLE = SCIPY_AVAILABLE
 bot.BAG_I_DEFINITION = BAG_I_DEFINITION
 bot.BAG_II_DEFINITION = BAG_II_DEFINITION
-bot.OWNER_DISPLAY_NAME = OWNER_DISPLAY_NAME  # This will be updated on_ready
 bot.prefix_cooldowns = commands.CooldownMapping.from_cooldown(
     1, 10, commands.BucketType.user
 )
