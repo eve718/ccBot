@@ -91,12 +91,12 @@ async def create_info_embed(bot_instance: commands.Bot):
     embed.add_field(name="Users", value=len(bot_instance.users), inline=True)
     embed.add_field(
         name="Source Code",
-        value="[View on GitHub](YOUR_GITHUB_REPO_URL_HERE)",
+        value="[View on GitHub]https://github.com/eve718/ccBot/commits/main/",
         inline=False,
     )
     embed.add_field(
         name="Invite Bot",
-        value="[Add to Your Server](YOUR_BOT_INVITE_LINK_HERE)",
+        value="[Add to Your Server]https://discord.com/oauth2/authorize?client_id=1376302750056579112&permissions=2147503104&integration_type=0&scope=bot+applications.commands",
         inline=False,
     )
     embed.set_footer(text="Thank you for using the bot!")

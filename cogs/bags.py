@@ -177,7 +177,7 @@ async def create_baginfo_embed(bot_instance: commands.Bot):
     bag2_exp, _ = get_bag_stats(bot_instance.BAG_II_DEFINITION)
 
     embed = discord.Embed(
-        title="🛍️ Bag Information",
+        title="Bag Information",
         description="Details about the soulstone contents, average values, and calculation thresholds for Bag I and Bag II.",
         color=discord.Color.gold(),
     )
