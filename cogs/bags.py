@@ -486,9 +486,10 @@ class Bags(commands.Cog):
         else:
             calculation_method_display = "Inputs too large; approximation library (SciPy) not available. Calculation may fail."
 
-        await interaction.response.send_message(
+        initial_message = await interaction.response.send_message(
             f"{calculation_method_display} This might take a moment. Please wait...",
-            ephemeral=False,
+            ephemeral=False,  # Ensure it's visible to everyone if you want to edit it
+            fetch_response=True,  # This is crucial to get the Message object back
         )
 
         try:
@@ -500,13 +501,25 @@ class Bags(commands.Cog):
             logger.info(
                 f"Calculation for {interaction.user.id} successful (method: {method_used})."
             )
+
+            final_embed = await create_bags_embed(
+                self.bot,
+                bag1,
+                bag2,
+                ss,
+                prob_at_least_target,
+                top_sums,
+                method_used,
+                prob_exact_target,
+            )
+            await initial_message.edit(content=None, embed=final_embed)
         except asyncio.TimeoutError:
             embed = discord.Embed(
                 title="⏰ Calculation Timeout",
                 description=f"The calculation took too long (more than `{self.bot.CALCULATION_TIMEOUT}` seconds) and was cancelled. Please try with smaller bag numbers.",
                 color=discord.Color.orange(),
             )
-            await interaction.followup.send(content=None, embed=embed, ephemeral=False)
+            await initial_message.edit(content=None, embed=embed)
             logger.warning(
                 f"Calculation for {interaction.user.id} timed out for 'bags' slash command."
             )
@@ -517,7 +530,7 @@ class Bags(commands.Cog):
                 description=f"Input error: {e}",
                 color=discord.Color.red(),
             )
-            await interaction.followup.send(content=None, embed=embed, ephemeral=False)
+            await initial_message.edit(content=None, embed=embed)
             logger.error(
                 f"Value error for {interaction.user.id} in 'bags' slash command: {e}"
             )
@@ -528,23 +541,11 @@ class Bags(commands.Cog):
                 description=f"An unexpected error occurred during calculation: `{e}`",
                 color=discord.Color.red(),
             )
-            await interaction.followup.send(content=None, embed=embed, ephemeral=False)
+            await initial_message.edit(content=None, embed=embed)
             logger.exception(
                 f"Unexpected error for {interaction.user.id} in 'bags' slash command."
             )
             return
-
-        final_embed = await create_bags_embed(
-            self.bot,
-            bag1,
-            bag2,
-            ss,
-            prob_at_least_target,
-            top_sums,
-            method_used,
-            prob_exact_target,
-        )
-        await interaction.followup.send(content=None, embed=final_embed)
 
     @commands.command(
         name="baginfo",
