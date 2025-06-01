@@ -8,6 +8,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 import logging
 import datetime
+import discord.utils  # Added for utcnow()
 
 # Import all constants from your new config.py
 from config import (
@@ -45,239 +46,174 @@ logging.basicConfig(
 )
 logger = logging.getLogger("discord_bot")
 
-
-keep_alive()  # Call your uptime function
-
+keep_alive()
 
 intents = discord.Intents.default()
-intents.message_content = True  # Required for prefix commands to read messages
+intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Store cooldown mapping directly on the bot object
-bot.prefix_cooldowns = commands.CooldownMapping.from_cooldown(
-    1, 10, commands.BucketType.user
-)
-
-# --- Assign constants from config.py to bot object ---
-bot.CALCULATION_TIMEOUT = CALCULATION_TIMEOUT
-bot.EXACT_CALC_THRESHOLD_BOX1 = EXACT_CALC_THRESHOLD_BOX1
-bot.EXACT_CALC_THRESHOLD_BOX2 = EXACT_CALC_THRESHOLD_BOX2
-bot.PROB_DIFFERENCE_THRESHOLD = PROB_DIFFERENCE_THRESHOLD
-bot.SCIPY_AVAILABLE = SCIPY_AVAILABLE
-bot.BAG_I_DEFINITION = BAG_I_DEFINITION
-bot.BAG_II_DEFINITION = BAG_II_DEFINITION
-# Assign scipy.stats.norm if available
-if SCIPY_AVAILABLE:
-    bot.norm = norm
-
-
-# Remove default help command
 bot.remove_command("help")
+
+# --- Global Constants (Still fine in main.py, or move to a config.py) ---
+# These are moved to config.py and imported. No need to define them here again
+# unless they are bot-specific defaults.
+# CALCULATION_TIMEOUT = 15
+# EXACT_CALC_THRESHOLD_BOX1 = 100
+# EXACT_CALC_THRESHOLD_BOX2 = 100
+# PROB_DIFFERENCE_THRESHOLD = 0.001
+
+# Global variable for bot online time and owner display name
+# bot_online_since will be an attribute of bot
+# OWNER_DISPLAY_NAME will be an attribute of bot
 
 
 @bot.event
 async def on_ready():
-    logger.info(f"Logged on as {bot.user} (ID: {bot.user.id})")
-    bot.bot_online_since = (
-        discord.utils.utcnow()
-    )  # Store start time directly on bot object
+    bot.bot_online_since = discord.utils.utcnow()  # Fixed: Assign to bot object
+    logger.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    logger.info(
+        f"Bot online since: {bot.bot_online_since.strftime('%Y-%m-%d %H:%M:%S UTC')}"
+    )
 
-    # Set bot owner ID and fetch name
-    if OWNER:
-        bot.owner_id = int(OWNER)
-        try:
-            owner_user = await bot.fetch_user(bot.owner_id)
-            # Assign the fetched owner's display name directly to the bot object
-            bot.owner_display_name = (
-                owner_user.display_name
-                if hasattr(owner_user, "display_name")
-                else owner_user.name
-            )
-            logger.info(f"Fetched owner display name: {bot.owner_display_name}")
-        except (ValueError, discord.NotFound, discord.HTTPException) as e:
-            logger.warning(
-                f"Could not fetch owner's name (ID: {OWNER}): {e}. Using default 'Bot Owner'."
-            )
-            bot.owner_display_name = "Bot Owner"  # Fallback if fetch fails
-    else:
-        logger.warning(
-            "OWNER_ID not set in .env. Owner-only commands may not work correctly."
-        )
-        bot.owner_display_name = "Bot Owner"  # Fallback if OWNER is not set
+    # Set OWNER_DISPLAY_NAME from fetched owner info
+    try:
+        owner_user = await bot.fetch_user(int(os.getenv("OWNER_ID")))
+        bot.OWNER_DISPLAY_NAME = owner_user.display_name
+        logger.info(f"Owner display name set to: {bot.OWNER_DISPLAY_NAME}")
+    except Exception as e:
+        logger.error(f"Could not fetch owner user to set display name: {e}")
+        bot.OWNER_DISPLAY_NAME = "Bot Owner"  # Fallback if fetching fails
 
     # Load cogs
-    initial_extensions = [
-        "cogs.general",
-        "cogs.bags",
-        "cogs.owner_commands",
-    ]
+    for cog_file in os.listdir("./cogs"):
+        if cog_file.endswith(".py") and not cog_file.startswith("_"):
+            try:
+                await bot.load_extension(f"cogs.{cog_file[:-3]}")
+                logger.info(f"Loaded cog: cogs.{cog_file[:-3]}")
+            except commands.ExtensionError as e:
+                logger.error(f"Failed to load cog {cog_file[:-3]}: {e}", exc_info=True)
 
-    for extension in initial_extensions:
-        try:
-            await bot.load_extension(extension)
-            logger.info(f"Loaded extension: {extension}")
-        except commands.ExtensionFailed as e:
-            logger.error(
-                f"Failed to load extension {extension}: {e.original}", exc_info=True
-            )
-        except commands.ExtensionNotFound:
-            logger.error(f"Extension not found: {extension}")
-        except Exception as e:
-            logger.error(
-                f"Unknown error loading extension {extension}: {e}", exc_info=True
-            )
+    # Make global variables available to cogs through the bot object
+    bot.CALCULATION_TIMEOUT = CALCULATION_TIMEOUT
+    bot.EXACT_CALC_THRESHOLD_BOX1 = EXACT_CALC_THRESHOLD_BOX1
+    bot.EXACT_CALC_THRESHOLD_BOX2 = EXACT_CALC_THRESHOLD_BOX2
+    bot.PROB_DIFFERENCE_THRESHOLD = PROB_DIFFERENCE_THRESHOLD
+    bot.SCIPY_AVAILABLE = SCIPY_AVAILABLE
+    bot.BAG_I_DEFINITION = BAG_I_DEFINITION
+    bot.BAG_II_DEFINITION = BAG_II_DEFINITION
+    # bot.OWNER_DISPLAY_NAME and bot.bot_online_since are already set in on_ready
 
-    try:
-        # Sync slash commands after cogs are loaded
-        # Consider `guild=discord.Object(id=YOUR_GUILD_ID)` for faster testing
-        await bot.tree.sync()
-        logger.info("Slash commands synced successfully.")
-    except Exception as e:
-        logger.error(f"Failed to sync slash commands: {e}", exc_info=True)
+    logger.info("Bot is ready and cogs loaded.")
 
 
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
-        # Provide more specific feedback for command not found
-        embed = discord.Embed(
-            title="🤔 Command Not Found",
-            description=f"The command `{ctx.message.content.split()[0]}` doesn't exist. "
-            f"Please check your spelling or try `/help` or `!menu` to see available commands.",
-            color=discord.Color.orange(),
-        )
-        await ctx.send(embed=embed)
-        logger.warning(f"Command not found: {ctx.message.content} by {ctx.author.id}")
+        # Ignore CommandNotFound errors to avoid spamming logs for invalid commands
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"Missing arguments. Usage: `{ctx.command.usage}`")
     elif isinstance(error, commands.BadArgument):
-        embed = discord.Embed(
-            title="❌ Invalid Argument",
-            description=f"You provided an invalid argument. Please check the command's usage.\n`{error}`",
-            color=discord.Color.red(),
-        )
-        await ctx.send(embed=embed)
-        logger.warning(
-            f"Bad argument for command {ctx.command}: {error} by {ctx.author.id}"
-        )
-    elif isinstance(error, commands.MissingRequiredArgument):
-        embed = discord.Embed(
-            title="⚠️ Missing Argument",
-            description=f"You're missing a required argument: `{error.param.name}`. "
-            f"Please check the command's usage.",
-            color=discord.Color.orange(),
-        )
-        await ctx.send(embed=embed)
-        logger.warning(
-            f"Missing argument for command {ctx.command}: {error} by {ctx.author.id}"
+        await ctx.send(
+            "Bad argument. Please check your input types (e.g., numbers for counts)."
         )
     elif isinstance(error, commands.CommandOnCooldown):
-        embed = discord.Embed(
-            title="⏳ Cooldown",
-            description=f"This command is on cooldown. Please try again in `{error.retry_after:.2f}` seconds.",
-            color=discord.Color.orange(),
-        )
-        await ctx.send(embed=embed)
-        logger.warning(
-            f"Command on cooldown for {ctx.author.id}: {error.retry_after:.2f}s left."
+        await ctx.send(
+            f"This command is on cooldown! Try again in `{error.retry_after:.2f}s`."
         )
     elif isinstance(error, commands.NotOwner):
-        embed = discord.Embed(
-            title="🚫 Permission Denied",
-            description="You don't have permission to use this command. This command is restricted to the bot owner.",
-            color=discord.Color.red(),
-        )
-        await ctx.send(embed=embed)
-        logger.warning(
-            f"Non-owner {ctx.author.id} attempted to use owner command: {ctx.command}"
-        )
-    elif isinstance(error, commands.MissingPermissions):
-        embed = discord.Embed(
-            title="🚫 Missing Permissions",
-            description=f"You need the following permissions to use this command: `{', '.join(error.missing_permissions)}`.",
-            color=discord.Color.red(),
-        )
-        await ctx.send(embed=embed)
-        logger.warning(
-            f"User {ctx.author.id} missing permissions for {ctx.command}: {error.missing_permissions}"
-        )
-    elif isinstance(error, commands.BotMissingPermissions):
-        embed = discord.Embed(
-            title="🚫 Bot Missing Permissions",
-            description=f"I need the following permissions to run this command: `{', '.join(error.missing_permissions)}`.",
-            color=discord.Color.red(),
-        )
-        await ctx.send(embed=embed)
-        logger.error(
-            f"Bot missing permissions for {ctx.command}: {error.missing_permissions}"
-        )
-    elif isinstance(error, commands.CommandInvokeError):
-        # CommandInvokeError wraps exceptions thrown inside the command itself
-        original_error = error.original
-        logger.error(
-            f"Error in command '{ctx.command}': {original_error}", exc_info=True
-        )
-        embed = discord.Embed(
-            title="💥 Error Executing Command",
-            description=f"An unexpected error occurred while running this command: `{original_error}`.\n"
-            "The developer has been notified.",
-            color=discord.Color.dark_red(),
-        )
-        await ctx.send(embed=embed)
+        await ctx.send("You do not have permission to use this command.")
     else:
-        logger.error(f"Unhandled prefix command error: {error}", exc_info=True)
-        embed = discord.Embed(
-            title="🐛 Unhandled Error",
-            description=f"An unhandled error occurred: `{error}`. The developer has been notified.",
-            color=discord.Color.red(),
-        )
-        await ctx.send(embed=embed)
+        logger.error(f"Ignoring exception in command {ctx.command}:", exc_info=True)
+        await ctx.send(f"An error occurred: `{error}`")
 
 
-@bot.event
+@bot.tree.error
 async def on_app_command_error(
     interaction: discord.Interaction, error: app_commands.AppCommandError
 ):
     if isinstance(error, app_commands.CommandOnCooldown):
+        error_message = (
+            f"This command is on cooldown! Try again in `{error.retry_after:.2f}s`."
+        )
         embed = discord.Embed(
             title="⏳ Cooldown",
-            description=f"This command is on cooldown. Please try again in `{error.retry_after:.2f}` seconds.",
+            description=error_message,
             color=discord.Color.orange(),
         )
     elif isinstance(error, app_commands.MissingPermissions):
+        error_message = "You don't have the necessary permissions to use this command."
         embed = discord.Embed(
             title="🚫 Missing Permissions",
-            description=f"You need the following permissions to use this command: `{', '.join(error.missing_permissions)}`.",
+            description=error_message,
+            color=discord.Color.red(),
+        )
+    elif isinstance(error, app_commands.MissingRole):
+        error_message = f"You need the '{error.missing_role}' role to use this command."
+        embed = discord.Embed(
+            title="🚫 Missing Role",
+            description=error_message,
             color=discord.Color.red(),
         )
     elif isinstance(error, app_commands.BotMissingPermissions):
+        error_message = f"I am missing permissions to run this command: `{', '.join(error.missing_permissions)}`."
         embed = discord.Embed(
-            title="🚫 Bot Missing Permissions",
-            description=f"I need the following permissions to run this command: `{', '.join(error.missing_permissions)}`.",
+            title="🤖 Bot Missing Permissions",
+            description=error_message,
             color=discord.Color.red(),
         )
-    elif isinstance(error, app_commands.NotOwner):
+    elif isinstance(error, app_commands.CheckFailure):
+        # Generic check failure, often includes is_owner()
+        error_message = "You are not authorized to use this command."
         embed = discord.Embed(
-            title="🚫 Permission Denied",
-            description="You don't have permission to use this command. This command is restricted to the bot owner.",
-            color=discord.Color.red(),
-        )
-    elif isinstance(error, app_commands.CommandInvokeError):
-        original_error = error.original
-        logger.error(
-            f"Error in slash command '{interaction.command.name}': {original_error}",
-            exc_info=True,
-        )
-        embed = discord.Embed(
-            title="💥 Error Executing Command",
-            description=f"An unexpected error occurred while running this command: `{original_error}`.\n"
-            "The developer has been notified.",
+            title="⛔ Authorization Failed",
+            description=error_message,
             color=discord.Color.dark_red(),
         )
+    elif isinstance(error, app_commands.CommandInvokeError):
+        # This wraps exceptions raised in the command's code
+        original_error = error.original
+        logger.error(
+            f"Error in application command '{interaction.command.name}': {original_error}",
+            exc_info=True,
+        )
+        if isinstance(original_error, asyncio.TimeoutError):
+            error_message = (
+                "The command timed out. This might happen with complex calculations "
+                "or if the bot is experiencing high load. Please try again or with simpler inputs."
+            )
+            embed = discord.Embed(
+                title="⏰ Command Timeout",
+                description=error_message,
+                color=discord.Color.orange(),
+            )
+        elif isinstance(original_error, ValueError):
+            error_message = f"Invalid input provided: `{original_error}`. Please check your arguments."
+            embed = discord.Embed(
+                title="❌ Invalid Input",
+                description=error_message,
+                color=discord.Color.red(),
+            )
+        else:
+            error_message = (
+                f"An unexpected error occurred while running this command: `{original_error}`.\n"
+                "The developer has been notified."
+            )
+            embed = discord.Embed(
+                title="💥 Error Executing Command",
+                description=error_message,
+                color=discord.Color.dark_red(),
+            )
     else:
         logger.error(f"Unhandled application command error: {error}", exc_info=True)
+        error_message = (
+            f"An unhandled error occurred: `{error}`. "
+            "The developer has been notified."
+        )
         embed = discord.Embed(
             title="🐛 Unhandled Error",
-            description=f"An unhandled error occurred: `{error}`. The developer has been notified.",
+            description=error_message,
             color=discord.Color.red(),
         )
 
@@ -300,5 +236,15 @@ async def on_app_command_error(
             exc_info=True,
         )
 
+
+# Make global variables available to cogs through the bot object
+bot.CALCULATION_TIMEOUT = CALCULATION_TIMEOUT
+bot.EXACT_CALC_THRESHOLD_BOX1 = EXACT_CALC_THRESHOLD_BOX1
+bot.EXACT_CALC_THRESHOLD_BOX2 = EXACT_CALC_THRESHOLD_BOX2
+bot.PROB_DIFFERENCE_THRESHOLD = PROB_DIFFERENCE_THRESHOLD
+bot.SCIPY_AVAILABLE = SCIPY_AVAILABLE
+bot.BAG_I_DEFINITION = BAG_I_DEFINITION
+bot.BAG_II_DEFINITION = BAG_II_DEFINITION
+# bot.OWNER_DISPLAY_NAME and bot.bot_online_since are already set in on_ready
 
 bot.run(TOKEN)
