@@ -508,16 +508,14 @@ class Bags(commands.Cog):
                 method_used,
                 prob_exact_target,
             )
-            await interaction.followup.edit_original_response(
-                content=None, embed=final_embed
-            )
+            await interaction.edit_original_response(content=None, embed=final_embed)
         except asyncio.TimeoutError:
             embed = discord.Embed(
                 title="⏰ Calculation Timeout",
                 description=f"The calculation took too long (more than `{self.bot.CALCULATION_TIMEOUT}` seconds) and was cancelled. Please try with smaller bag numbers.",
                 color=discord.Color.orange(),
             )
-            await interaction.followup.edit_original_response(content=None, embed=embed)
+            await interaction.edit_original_response(content=None, embed=embed)
             logger.warning(
                 f"Calculation for {interaction.user.id} timed out for 'bags' slash command."
             )
@@ -528,7 +526,7 @@ class Bags(commands.Cog):
                 description=f"Input error: {e}",
                 color=discord.Color.red(),
             )
-            await interaction.followup.edit_original_response(content=None, embed=embed)
+            await interaction.edit_original_response(content=None, embed=embed)
             logger.error(
                 f"Value error for {interaction.user.id} in 'bags' slash command: {e}"
             )
@@ -539,7 +537,7 @@ class Bags(commands.Cog):
                 description=f"An unexpected error occurred during calculation: `{e}`",
                 color=discord.Color.red(),
             )
-            await interaction.followup.edit_original_response(content=None, embed=embed)
+            await interaction.edit_original_response(content=None, embed=embed)
             logger.exception(
                 f"Unexpected error for {interaction.user.id} in 'bags' slash command."
             )
