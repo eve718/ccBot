@@ -199,7 +199,6 @@ class CommandMenuView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         try:
-            await interaction.response.defer(ephemeral=False, thinking=True)
             command_name = button.custom_id.replace("menu_button_", "")
             logger.info(f"User {interaction.user.id} clicked '{command_name}' button.")
 
@@ -241,20 +240,21 @@ class CommandMenuView(discord.ui.View):
                     color=discord.Color.red(),
                 )
 
-            if self.message:
-                await self.message.edit(embed=content_embed, view=current_view)
-                logger.info(f"Edited menu embed for command '{command_name}'.")
-            else:
-                logger.warning(
-                    f"Failed to edit menu embed for '{command_name}': self.message was not set."
+            # If the interaction hasn't been responded to yet, we use edit_message.
+            # This simultaneously acknowledges the interaction AND edits the original message.
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(
+                    embed=content_embed, view=current_view
                 )
-                await interaction.followup.send(embed=content_embed, ephemeral=True)
-                return
-
-            await interaction.delete_original_response()
-            logger.info(
-                f"Dismissed 'Bot is thinking...' message for '{command_name}' button click."
-            )
+                logger.info(f"Edited menu message for command '{command_name}'.")
+            else:
+                # This case should ideally not happen if this is the first response to the button click.
+                # However, as a fallback (e.g., if defer was somehow manually called elsewhere for this interaction)
+                # we'd edit the existing response.
+                await interaction.edit_original_response(
+                    embed=content_embed, view=current_view
+                )
+                logger.info(f"Edited original response for command '{command_name}'.")
 
         except Exception as e:
             logger.error(
